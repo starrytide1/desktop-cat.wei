@@ -2,7 +2,7 @@
 
 > 一份从「GitHub 爆火打字小猫」调研开始，到零基础搭建工具链、开发原生桌宠、接入 MCP、扩展外观编辑器、制作桌面快捷方式、安全审计加固，再到**合规化改造**的全流程记录。
 >
-> 文档日期：2026-11-26　｜　项目版本：0.1.0　｜　最终交付：`deliverables/PawPal.exe`（9.2 MB）
+> 文档日期：2026-11-26　｜　项目版本：0.1.0　｜　最终交付：`deliverables/PawPal.exe`（9.1 MB，见第 17 章）
 >
 > ⚠️ **当前为合规版**：最终交付已按五条安全约束重构——无全局输入监听、无网络、无端口、无剪贴板/截图/目录遍历、持久化仅 `%APPDATA%/PawPal/config.json` 单文件、无管理员权限与自动更新。本文第七、九章中描述的全局钩子/HTTP 端口/localStorage 属于**改造前的历史实现**，当前状态以新增的「十三、合规化改造」章节为准。
 
@@ -764,7 +764,7 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 
 - **功能取舍**：切到其他软件打字时小猫不再反应——这是「仅监听自身窗口」约束的必然结果；外观编辑、图片生成、MCP 热更新、桌面快捷方式均保留。
 - **快捷方式**：`--appearance` 不再做跨进程转发（无需端口），只驱动本进程内的事件。
-- **最终交付**：`deliverables/PawPal.exe`（9.2 MB，SHA-256 `5712c04d529d50af45b39b6968ff3b4a72a841a2d39d9fe69794b9cca238d8c0`），桌面快捷方式保持不变。
+- **当时交付**：`deliverables/PawPal.exe`（9.2 MB，SHA-256 `5712c04d529d50af45b39b6968ff3b4a72a841a2d39d9fe69794b9cca238d8c0`）；现已被第 17 章版本替代。
 
 ---
 
@@ -922,11 +922,61 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 
 - `node --check pawpal/src/main.js` 通过；`npm run build` 与 `npx tauri build` 均成功，MSI 与 NSIS 安装包一并产出。
 - 用无头 Chrome + CDP 派发窗口内按键序列（`KeyA/KeyS/KeyD/KeyL/Space`），截图确认：猫左爪与右爪分别落到键盘键位上，被敲键帽高亮，字符 `S`、`D`、`L` 从键帽上方弹出并上飘；控制台无异常。
-- 最终交付：`deliverables/PawPal.exe`（9.2 MB，SHA-256 `5712c04d529d50af45b39b6968ff3b4a72a841a2d39d9fe69794b9cca238d8c0`）。
+- 当次交付：`deliverables/PawPal.exe`（9.2 MB，SHA-256 `5712c04d529d50af45b39b6968ff3b4a72a841a2d39d9fe69794b9cca238d8c0`）；现已被第 17 章版本替代。
 - 合规边界不变：弹字只发生在应用自身窗口内，不读剪贴板、不联网、不开端口、不写额外文件；隐私模式可关闭真实字符显示。
+
+---
+
+## 17. 表情、拖拽缩放与移除穿透（本次新增）
+
+### 17.1 需求与结果
+
+| 需求 | 结果 |
+|---|---|
+| 摸猫头时闭眼享受表情 | 已实现：弯月闭眼 + 小舌头 + 腮红加深 + 爱心，松手恢复 |
+| 宠物可拖拽、可放大缩小 | 已实现：拖身体移动窗口；工具栏 `－/＋`、设置里的「窗口大小」滑块、`Ctrl/⌘ + 滚轮` 三种缩放方式 |
+| 取消穿透功能 | 已彻底移除：工具栏按钮、设置开关、托盘菜单项、Rust 命令与状态位全部删除 |
+| 设置按钮打不开 | 已修复（根因见 17.3） |
+
+### 17.2 代码位置
+
+| 文件:行号 | 内容 |
+|---|---|
+| `pawpal/src/main.js:184-196` | 新增 `happyFace` 组：两条 `TorusGeometry` 弯月眼 + 小舌头，默认隐藏 |
+| `pawpal/src/main.js:969-982` | 动画循环：`enjoying = S.petting && !S.sleeping` 时闭眼、显示 `happyFace`、舌头轻动、腮红加深 |
+| `pawpal/src/main.js:23-27` | `mergeConfig()` 读入旧配置时 `delete cfg.pass`，清理历史残留的穿透开关 |
+| `pawpal/src/main.js:882-886` | `Ctrl/⌘ + 滚轮` 缩放（`{ passive:false }` 并阻止页面默认缩放） |
+| `pawpal/src/main.js:1038-1055` | 工具栏 `－/＋` 按钮、`applyWindowSize()` / `zoomPet()`，以 760×560 为 100%，范围 60%–160% |
+| `pawpal/src/main.js:1146,1165,1173` | 「窗口大小」滑块、复位与配置载入都改走 `applyWindowSize()`，不再用 `document.body.style.zoom` |
+| `pawpal/src/main.js:1178-1180` | `config-changed` 处理：自身写入触发的 mtime 变化直接跳过，避免误报「已同步外部配置」 |
+| `pawpal/src-tauri/src/main.rs:88-120` | 删除 `toggle_passthrough` / `get_passthrough` / `set_passthrough` 与 `PASSTHROUGH` 状态；新增 `set_pet_size`（限制 420×320–1200×900，保持窗口中心） |
+| `pawpal/src-tauri/src/main.rs:182-193` | 托盘菜单移除「切换点击穿透」；启动时 `set_ignore_cursor_events(false)` 强制恢复鼠标可点击 |
+| `pawpal/src-tauri/tauri.conf.json:20` | `resizable: true`，允许程序化与边缘拖拽缩放 |
+| `pawpal/index.html:74-79,115,128-130` | 工具栏换成 `－/＋`；删除穿透开关与旧文案，提示更新为「拖动身体移动 · 按住猫头摸摸 · +/- 缩放」 |
+
+### 17.3 设置按钮打不开的根因
+
+用户机上的 `%APPDATA%/PawPal/config.json` 残留 `"pass":true`。旧版启动时调用 `set_ignore_cursor_events(true)`，让整个 WebView **忽略所有鼠标事件**，连工具栏「设置」按钮也点不到——并非按钮事件绑定或 CSS 问题。
+
+修复分三层：
+
+1. 前端读入配置时删除 `pass` 字段并回写，旧配置自动净化；
+2. Rust 启动时无条件 `set_ignore_cursor_events(false)`，即使旧配置残留也不会 MainWindow 忽略鼠标；
+3. 穿透相关的前端入口、托盘菜单与命令全部移除，无法再开启。
+
+### 17.4 验证
+
+- `node --check`、Vite 构建、Tauri release 构建均通过，MSI 与 NSIS 安装包成功产出。
+- 真实窗口测试：启动后配置文件中的 `pass` 字段消失；用鼠标点击右上角「设置」，面板成功展开（见验证截图），标题、毛色、外观编辑器均可见。
+- 缩放测试：点击 `－/＋` 后窗口外框尺寸发生变化（839×618 ↔ 755×557，含 DPI 缩放），设置项 `size` 同步更新。
+- 拖拽测试：在猫身位置按下并拖动，窗口从 `(939,368)` 移到 `(1080,348)`，拖拽生效。
+- 表情测试：无头 Chrome + CDP 在猫头位置派发 `mousePressed`，截图确认弯月闭眼、小舌头、腮红加深与爱心飘出，控制台无异常。
+- 合规边界不变：没有新增网络请求、子进程、注册表写入或全局输入监听；窗口尺寸仍只写在同一配置文件里。
+
+**当前最终交付**：`deliverables/PawPal.exe`（9.1 MB，SHA-256 `c3fe66809ee141d19011198ac2683c7e5d2df1fac1ad1a080e415501860fa765`）。
 
 ---
 
 **文档结束**
 
-> 本文档记录了 PawPal 项目从需求到交付、再到合规化改造的完整过程。所有技术决策、踩坑记录、配置细节、安全审计与合规改造结论均来自实际执行过程，并经过验证。最终交付物为 `deliverables/PawPal.exe`（合规版），可直接双击运行。
+> 本文档记录了 PawPal 项目从需求到交付、再到合规化改造与后续迭代的完整过程。所有技术决策、踩坑记录、配置细节、安全审计与合规改造结论均来自实际执行过程，并经过验证。最终交付物为 `deliverables/PawPal.exe`（合规版），可直接双击运行。

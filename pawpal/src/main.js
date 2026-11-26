@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 /* ============ 配置 ============ */
 const DEFAULT = {
   coat: "orange", layout: 65, sleep: 8000, size: 100,
-  purr: true, sleeppurr: true, idle: true, privacy: false, top: true, pass: false,
+  purr: true, sleeppurr: true, idle: true, privacy: false, top: true,
   remind: false, rmMin: 45, rmText: "该起来活动一下啦",
 };
 const DEFAULT_LOOK = {
@@ -21,6 +21,9 @@ let applyingRemote = false; // 应用配置文件变更时阻止回写，避免�
 function mergeConfig(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
   const cfg = Object.assign({}, DEFAULT, raw);
+  // 旧版本配置里可能残留 pass:true；穿透功能已移除，读入时统一清掉，
+  // 避免旧配置导致窗口忽略鼠标（设置按钮点不开）。
+  delete cfg.pass;
   cfg.look = Object.assign({}, DEFAULT_LOOK, raw.look || {});
   CFG = cfg;
 }
@@ -91,7 +94,7 @@ const M = {
   fur: mat(0xF4A34C), shade: mat(0xD9822E), light: mat(0xFFD9A0),
   belly: mat(0xFFF1DC), ear: mat(0xF3A0A4), eye: mat(0x4E8E5B),
   line: mat(0xC4732B), black: mat(0x1d1a20), white: mat(0xffffff),
-  nose: mat(0xE88b92), keycap: mat(0x6b6573), keybody: mat(0x38353f),
+  nose: mat(0xE88b92), face: mat(0x6d4a42), keycap: mat(0x6b6573), keybody: mat(0x38353f),
   mouseBody: mat(0xf4f2f6), mouseWheel: mat(0xb9b4c2),
   eye2: mat(0x4FA9D6), patch1: mat(0xE69A3C), patch2: mat(0x3A3740), acc: mat(0xE86E82), bell: mat(0xF2C14E),
 };
@@ -179,6 +182,20 @@ for (const s of [-1,1]) for (let i=0;i<3;i++){
   ];
   headGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), whiskerMat));
 }
+
+// 享受表情：闭眼弯月 + 小舌头，只在摸头时显示
+const happyFace = new THREE.Group();
+headGroup.add(happyFace);
+for (const s of [-1, 1]) {
+  const arc = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.035, 8, 20, Math.PI), M.face);
+  arc.position.set(s * 0.4, 0.13, 1.02);
+  happyFace.add(arc);
+}
+const tongue = sphere(0.075, M.nose, 16);
+tongue.scale.set(1.1, 0.7, 0.5);
+tongue.position.set(0, -0.3, 1.03);
+happyFace.add(tongue);
+happyFace.visible = false;
 
 // 前爪（固定部件，位置随体态调整）
 const paws = [];
@@ -861,7 +878,11 @@ window.addEventListener("keydown", e=>{
   pressKey(e.code, left?"L":"R", e.key);
 });
 window.addEventListener("mousemove", e=>{ S.mouseX=e.clientX; S.mouseY=e.clientY; S.lastAct=performance.now(); wake(); });
-window.addEventListener("wheel", ()=>{ S.scroll=1; S.lastAct=performance.now(); wake(); });
+window.addEventListener("wheel", e=>{
+  // Ctrl/⌘ + 滚轮：缩放宠物窗口；普通滚轮仍是唤醒猫
+  if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomPet(e.deltaY < 0 ? 10 : -10); return; }
+  S.scroll=1; S.lastAct=performance.now(); wake();
+}, { passive:false });
 
 // 摸猫：在画布上按下鼠标靠近头部
 canvas.addEventListener("mousedown", e=>{
@@ -946,17 +967,19 @@ function frame(now){
   headGroup.rotation.x += (-S.eyeY*0.12 - headGroup.rotation.x)*Math.min(1,dt/180);
   headGroup.rotation.z = Math.sin(now/2600)*0.02;
 
-  // 眼睛
-  const closed = S.sleeping || S.blink>0;
-  const squint = S.petting ? 0.5 : 1;
+  // 眼睛：摸头时闭眼享受（弯月眼 + 小舌头），睡觉/眨眼时也会闭眼
+  const enjoying = S.petting && !S.sleeping;
+  const closed = S.sleeping || S.blink>0 || enjoying;
   eyes.forEach(e=>{
-    e.group.scale.y = closed ? 0.08 : squint;
+    e.group.scale.y = closed ? 0.08 : 1;
     e.iris.position.x = S.eyeX*0.06;
     e.iris.position.y = -S.eyeY*0.04;
     e.pupil.position.x = S.eyeX*0.07;
     e.pupil.position.y = -S.eyeY*0.05;
   });
-  blushL.material.opacity = S.petting ? 0.85 : 0.55;
+  happyFace.visible = enjoying;
+  if (enjoying) tongue.position.y = -0.3 + Math.sin(now/220)*0.012;
+  blushL.material.opacity = S.petting ? 0.9 : 0.55;
   blushR.material.opacity = blushL.material.opacity;
 
   // 爪子：打字时移到被敲的键位上方，停止后回到胸前
@@ -1029,13 +1052,21 @@ $("btn-demo").onclick = e=>{
   S.demo=!S.demo; e.target.textContent=S.demo?"停止":"演示";
   e.target.style.background=S.demo?"#7b6cf6":""; e.target.style.color=S.demo?"#fff":"";
 };
-$("btn-pass").onclick = async ()=>{
-  try {
-    const on = await invoke("toggle_passthrough");
-    $("btn-pass").textContent = on?"穿透:开":"穿透:关";
-    CFG.pass=on; saveCfg(); syncUI();
-  } catch(e){ $("status").textContent="穿透切换失败（浏览器模式不可用）"; }
-};
+// 窗口缩放：以 760x560 为 100%，保持窗口中心不变
+const BASE_W = 760, BASE_H = 560;
+function applyWindowSize() {
+  const w = Math.round(BASE_W * CFG.size / 100);
+  const h = Math.round(BASE_H * CFG.size / 100);
+  invoke("set_pet_size", { width:w, height:h }).catch(()=>{});
+}
+function zoomPet(step) {
+  const next = THREE.MathUtils.clamp(Math.round(CFG.size + step), 60, 160);
+  if (next === CFG.size) return;
+  CFG.size = next; saveCfg(); applyWindowSize(); syncUI();
+  showToast(`窗口大小 ${next}%`);
+}
+$("btn-zoom-in").onclick = ()=>zoomPet(10);
+$("btn-zoom-out").onclick = ()=>zoomPet(-10);
 $("btn-hide").onclick = ()=>{ invoke("hide_cat").catch(()=>{}); };
 
 listen("open-settings", ()=>togglePanel(true)).catch(()=>{});
@@ -1128,18 +1159,16 @@ function syncUI(){
   sw("sw-idle","idle");
   sw("sw-privacy","privacy");
   sw("sw-top","top",v=>invoke("set_topmost",{enable:v}).catch(()=>{}));
-  sw("sw-pass","pass",v=>{invoke("set_topmost",{enable:CFG.top}).catch(()=>{}); invoke("toggle_passthrough").catch(()=>{});});
   sw("sw-remind","remind",setupReminder);
   $("size").value=CFG.size;
   $("rm-min").value=CFG.rmMin;
   $("rm-text").value=CFG.rmText;
   applyCoat();
-  $("btn-pass").textContent = CFG.pass?"穿透:开":"穿透:关";
 }
-$("size").oninput=e=>{ CFG.size=Number(e.target.value); saveCfg(); document.body.style.zoom=CFG.size/100; };
+$("size").oninput=e=>{ CFG.size=Number(e.target.value); saveCfg(); applyWindowSize(); };
 $("rm-min").onchange=e=>{ CFG.rmMin=Math.max(1,Number(e.target.value)||45); saveCfg(); setupReminder(); };
 $("rm-text").onchange=e=>{ CFG.rmText=e.target.value||"该起来活动一下啦"; saveCfg(); };
-$("btn-reset").onclick=()=>{ CFG=Object.assign({},DEFAULT,{ look:CFG.look, coat:CFG.coat, customCoat:CFG.customCoat }); saveCfg(); setupReminder(); syncUI(); document.body.style.zoom=1; };
+$("btn-reset").onclick=()=>{ CFG=Object.assign({},DEFAULT,{ look:CFG.look, coat:CFG.coat, customCoat:CFG.customCoat }); saveCfg(); setupReminder(); syncUI(); applyWindowSize(); };
 
 let remindTimer=null;
 function setupReminder(){
@@ -1154,7 +1183,7 @@ function setupReminder(){
 
 /* ============ 启动与热加载 ============ */
 function applyLoadedConfig() {
-  document.body.style.zoom = CFG.size/100;
+  applyWindowSize();
   buildKeys(CFG.layout);
   setupLookUI();
   syncUI();
@@ -1168,6 +1197,8 @@ listen("config-changed", async () => {
   try {
     const text = await invoke("read_config");
     if (!text) return;
+    // 自己写入配置也会触发 mtime 事件；内容一致时直接跳过，避免误报“外部配置”
+    if (text === JSON.stringify(CFG)) return;
     applyingRemote = true;
     mergeConfig(JSON.parse(text));
     applyLoadedConfig();
@@ -1183,6 +1214,5 @@ applyLoadedConfig();
 initConfig().then(() => {
   applyLoadedConfig();
   setupReminder();
-  if (CFG.pass) invoke("toggle_passthrough").catch(()=>{});
   if (CFG.top) invoke("set_topmost",{enable:true}).catch(()=>{});
 });

@@ -16,10 +16,9 @@ use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize,
 };
 
-static PASSTHROUGH: AtomicBool = AtomicBool::new(false);
 static ALWAYS_TOP: AtomicBool = AtomicBool::new(true);
 
 /// 唯一的持久化文件：%APPDATA%/PawPal/config.json
@@ -88,23 +87,34 @@ fn watch_config(app: AppHandle) {
 
 /* ---------- 窗口控制（全部为进程内命令，无网络） ---------- */
 
+/// 缩放宠物窗口：接收逻辑像素尺寸，限制范围并保持窗口中心不变。
+/// 点击穿透功能已移除，窗口始终可接收鼠标事件。
 #[tauri::command]
-fn toggle_passthrough(app: AppHandle) -> bool {
-    let enable = !PASSTHROUGH.load(Ordering::SeqCst);
-    set_passthrough(&app, enable);
-    enable
-}
-
-#[tauri::command]
-fn get_passthrough() -> bool {
-    PASSTHROUGH.load(Ordering::SeqCst)
-}
-
-fn set_passthrough(app: &AppHandle, enable: bool) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.set_ignore_cursor_events(enable);
-        PASSTHROUGH.store(enable, Ordering::SeqCst);
-    }
+fn set_pet_size(app: AppHandle, width: u32, height: u32) -> bool {
+    let w = width.clamp(420, 1200);
+    let h = height.clamp(320, 900);
+    let Some(win) = app.get_webview_window("main") else {
+        return false;
+    };
+    let Ok(size) = win.inner_size() else {
+        return false;
+    };
+    let Ok(pos) = win.outer_position() else {
+        return false;
+    };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let physical = PhysicalSize::new(
+        (w as f64 * scale).round() as u32,
+        (h as f64 * scale).round() as u32,
+    );
+    let center_x = pos.x + size.width as i32 / 2;
+    let center_y = pos.y + size.height as i32 / 2;
+    let _ = win.set_position(PhysicalPosition::new(
+        center_x - physical.width as i32 / 2,
+        center_y - physical.height as i32 / 2,
+    ));
+    let _ = win.set_size(physical);
+    true
 }
 
 #[tauri::command]
@@ -171,11 +181,15 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
+            // 旧配置可能开启过点击穿透：启动时强制恢复鼠标可点击，保证按钮可用
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_ignore_cursor_events(false);
+            }
+
             let show = MenuItem::with_id(app, "show", "显示小猫", true, None::<&str>)?;
-            let pass = MenuItem::with_id(app, "pass", "切换点击穿透", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &pass, &settings, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &settings, &quit])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -187,10 +201,6 @@ fn main() {
                             let _ = w.show();
                             let _ = w.set_focus();
                         }
-                    }
-                    "pass" => {
-                        let enable = !PASSTHROUGH.load(Ordering::SeqCst);
-                        set_passthrough(app, enable);
                     }
                     "settings" => {
                         if let Some(w) = app.get_webview_window("main") {
@@ -245,8 +255,7 @@ fn main() {
             read_config,
             write_config,
             get_config_path,
-            toggle_passthrough,
-            get_passthrough,
+            set_pet_size,
             set_topmost,
             get_topmost,
             hide_cat,

@@ -17,7 +17,7 @@
         "title": "PawPal",
         "width": 760,
         "height": 560,
-        "resizable": false,
+        "resizable": true,
         "center": true,
         "decorations": false,
         "transparent": true,

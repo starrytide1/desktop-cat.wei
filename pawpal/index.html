@@ -72,14 +72,15 @@
 <canvas id="scene"></canvas>
 <div id="ui">
   <div id="toolbar">
+    <button id="btn-zoom-out" title="缩小窗口">－</button>
+    <button id="btn-zoom-in" title="放大窗口">＋</button>
     <button id="btn-demo">演示</button>
-    <button id="btn-pass">穿透:开</button>
     <button id="btn-hide">隐藏</button>
     <button id="btn-set">设置</button>
   </div>
   <div id="settings">
     <h2>PawPal 设置</h2>
-    <p class="sub">原生桌宠 · 全局键鼠响应 · 所有数据只存本机</p>
+    <p class="sub">原生桌宠 · 仅响应本窗口内键鼠 · 所有数据只存本机</p>
     <div class="row"><span>MCP 控制接口</span><span class="status" id="mcp-status" style="margin:0">检测中…</span></div>
     <div class="grp">
       <div class="title">毛色</div>
@@ -107,13 +108,12 @@
       <div class="title">行为</div>
       <div class="row"><span>键盘布局</span><div class="seg" id="layout"><button data-v="65">65%</button><button data-v="104">104%</button></div></div>
       <div class="row"><span>睡意</span><div class="seg" id="sleep"><button data-v="4000">快</button><button data-v="8000">中</button><button data-v="15000">慢</button></div></div>
-      <div class="row"><span>大小</span><input type="range" id="size" min="60" max="140" value="100"></div>
+      <div class="row"><span>窗口大小</span><input type="range" id="size" min="60" max="160" value="100"></div>
       <div class="row"><span>摸猫呼噜</span><div class="sw" id="sw-purr"></div></div>
       <div class="row"><span>睡觉呼噜</span><div class="sw" id="sw-sleeppurr"></div></div>
       <div class="row"><span>随机动作</span><div class="sw" id="sw-idle"></div></div>
       <div class="row"><span>隐私模式</span><div class="sw" id="sw-privacy"></div></div>
       <div class="row"><span>始终置顶</span><div class="sw" id="sw-top"></div></div>
-      <div class="row"><span>点击穿透</span><div class="sw" id="sw-pass"></div></div>
     </div>
     <div class="grp">
       <div class="title">语音提醒</div>
@@ -125,9 +125,9 @@
       <button id="btn-reset">恢复默认</button>
       <button id="btn-close" class="primary">完成</button>
     </div>
-    <div class="status" id="status">全局输入监听已就绪</div>
+    <div class="status" id="status">窗口内输入监听已就绪</div>
   </div>
-  <div id="tip">敲键盘试试 · 移动鼠标它会看 · 按住猫头摸摸 · 右键菜单</div>
+  <div id="tip">拖动身体移动 · 按住猫头摸摸 · +/- 缩放 · 窗口内打字 · 右键设置</div>
 </div>
 <script type="module" src="/src/main.js"></script>
 </body>
