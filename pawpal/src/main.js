@@ -468,9 +468,10 @@ function buildKeys(layout) {
 }
 buildKeys(CFG.layout);
 
-/* ---- 按键符号弹出：只在窗口内按键时生成，隐私模式下只显示圆点 ---- */
+/* ---- 按键键帽弹出：像小键帽一样在猫咪身旁抛物跳跃，隐私模式下只显示圆点 ---- */
+// 挂在 root 而非 keyboard，弹字不再局限在键盘上
 const popupsGroup = new THREE.Group();
-keyboard.add(popupsGroup);
+root.add(popupsGroup);
 const symbolTextures = new Map();
 const keyPopups = [];
 
@@ -485,18 +486,32 @@ function symbolLabel(key) {
   return key.length === 1 ? key.toUpperCase() : key.slice(0, 2);
 }
 
+// 画出带键帽外观的贴图：圆角键帽面 + 底部厚度 + 描边 + 字符
 function symbolTexture(text) {
   let tex = symbolTextures.get(text);
   if (tex) return tex;
   const canvas = document.createElement("canvas");
-  canvas.width = 128; canvas.height = 128;
+  canvas.width = 160; canvas.height = 140;
   const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, 128, 128);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const rr = (x,y,w,h,r)=>{
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  };
+  // 键帽底部厚度（深色）
+  ctx.fillStyle = "rgba(38,30,48,0.92)";
+  rr(20, 34, 120, 82, 16); ctx.fill();
+  // 键帽顶面（浅色渐变）
+  const grad = ctx.createLinearGradient(0, 22, 0, 106);
+  grad.addColorStop(0, "#fffaf0"); grad.addColorStop(1, "#e4dac7");
+  ctx.fillStyle = grad; rr(20, 22, 120, 82, 16); ctx.fill();
+  ctx.lineWidth = 4; ctx.strokeStyle = "rgba(72,56,86,0.9)"; ctx.stroke();
+  // 字符
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.font = `bold ${text.length > 1 ? 54 : 76}px system-ui, -apple-system, sans-serif`;
-  ctx.lineJoin = "round"; ctx.lineWidth = 12; ctx.strokeStyle = "rgba(48,36,60,0.9)";
-  ctx.strokeText(text, 64, 68);
-  ctx.fillStyle = "#fff6d8"; ctx.fillText(text, 64, 68);
+  ctx.font = `bold ${text.length > 1 ? 50 : 70}px system-ui, -apple-system, sans-serif`;
+  ctx.fillStyle = "#4a3a54";
+  ctx.fillText(text, 80, 64);
   tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   if (symbolTextures.size > 80) {
@@ -508,17 +523,26 @@ function symbolTexture(text) {
   return tex;
 }
 
-function spawnSymbol(idx, label) {
-  const k = keyMeshes[idx];
-  if (!k || !label) return;
+// 在猫咪身旁（左键左侧 / 右键右侧）生成一枚向上抛物跳跃的键帽
+function spawnSymbol(side, label) {
+  if (!label) return;
   const material = new THREE.SpriteMaterial({
     map: symbolTexture(label), transparent: true, depthTest: false, opacity: 1,
   });
   const sprite = new THREE.Sprite(material);
-  sprite.position.set(k.position.x, k.position.y + 0.2, k.position.z + 0.08);
-  sprite.scale.setScalar(0.26);
+  const dir = side === "L" ? -1 : 1;
+  const x0 = dir * (1.55 + Math.random()*0.55);
+  const y0 = -0.65 + Math.random()*0.35;
+  sprite.position.set(x0, y0, 1.6);
+  sprite.scale.set(0.62, 0.54, 1);
   popupsGroup.add(sprite);
-  keyPopups.push({ mesh: sprite, life: 1, baseY: sprite.position.y });
+  keyPopups.push({
+    mesh: sprite, life: 1, x0, y0,
+    vx: dir*(0.2 + Math.random()*0.35),
+    vy: 3.0 + Math.random()*0.8,
+    spin: (Math.random()-0.5)*0.6,
+    sec: 0,
+  });
   while (keyPopups.length > 20) {
     const old = keyPopups.shift();
     popupsGroup.remove(old.mesh);
@@ -542,7 +566,7 @@ const mEyeR = sphere(0.055, M.eye); mEyeR.position.set(0.17,0.17,-0.32); miniMou
 const S = {
   t:0, lastAct:performance.now(), sleeping:false, petting:false,
   pawL:0, pawR:0, flash:{key:"",side:"",t:0},
-  lastKey:0, pawTarget:{ L:null, R:null },
+  lastKey:0, pawTarget:{ L:null, R:null }, typing:0,
   eyeX:0, eyeY:0, headTilt:0, blink:0, nextBlink:1500+Math.random()*2500,
   scroll:0, mouseX:0, mouseY:0, demo:false, demoTimer:0,
   nextIdle:3000+Math.random()*3000, yawn:0, zzz:[], hearts:[],
@@ -809,11 +833,12 @@ function pressKey(code, side, label) {
   S.flash = { key:code, side, t:now };
   S.lastAct = now;
   S.lastKey = now;
+  S.typing = 1; // 打字活跃：眼睛看键盘、身体前倾、暂停鼠标跟随
   wake();
   const idx = keyIndex(code, side);
   lightKey(code, side, idx);
   // 隐私模式下只弹圆点，不显示真实字符
-  spawnSymbol(idx, CFG.privacy ? "•" : symbolLabel(label));
+  spawnSymbol(side, CFG.privacy ? "•" : symbolLabel(label));
   const k = keyMeshes[idx];
   if (k) {
     keyboard.updateWorldMatrix(true, false);
@@ -825,6 +850,17 @@ function pressKey(code, side, label) {
   }
 }
 window.__pawpalPressKey = pressKey;
+// 只读调试接口：暴露当前动画状态，便于自动化验证（无副作用）
+window.__pawpalDebug = () => ({
+  headPitch: headGroup.rotation.x,
+  headYaw: headGroup.rotation.y,
+  bodyLean: cat.rotation.x,
+  eyeX: S.eyeX, eyeY: S.eyeY,
+  typing: S.typing,
+  popups: keyPopups.length,
+  popupY: keyPopups.length ? keyPopups[0].mesh.position.y : null,
+  sleeping: S.sleeping,
+});
 
 function wake() {
   if (S.sleeping) {
@@ -918,6 +954,7 @@ function frame(now){
   S.pawR = Math.max(0, S.pawR - dt/170);
   S.scroll = Math.max(0, S.scroll - dt/450);
   S.yawn = Math.max(0, S.yawn - dt/500);
+  S.typing = Math.max(0, S.typing - dt/700); // 停打 0.7s 后恢复鼠标跟随
 
   // 键帽被按下后下沉，再回弹
   keyMeshes.forEach(k=>{
@@ -930,13 +967,17 @@ function frame(now){
       k.position.y = k.userData.baseY;
     }
   });
-  // 弹出的字符向上飘并淡出
+  // 键帽在猫咪身旁做抛物跳跃：横向漂移 + 竖直上抛下落 + 轻微旋转
   keyPopups.forEach(p=>{
-    p.life -= dt/1100; // 延长到 1.1 秒，弹字更持久不易“消失”
-    const t = 1 - Math.max(0, p.life);
-    p.mesh.position.y = p.baseY + t*0.5;
-    p.mesh.scale.setScalar(0.26 + Math.min(1, t*5)*0.12);
-    p.mesh.material.opacity = Math.max(0, Math.min(1, p.life*2.2));
+    p.life -= dt/1300;
+    p.sec += dt/1000;
+    const s = p.sec;
+    p.mesh.position.x = p.x0 + p.vx*s;
+    p.mesh.position.y = p.y0 + p.vy*s - 4.2*s*s; // g≈8.4，约 0.8s 落回
+    p.mesh.material.rotation = p.spin*Math.sin(s*5);
+    const pop = Math.min(1, (1-p.life)*9);
+    p.mesh.scale.set(0.62*pop, 0.54*pop, 1);
+    p.mesh.material.opacity = Math.max(0, Math.min(1, p.life*2.4));
   });
   for (let i=keyPopups.length-1;i>=0;i--){
     if (keyPopups[i].life <= 0){
@@ -966,15 +1007,25 @@ function frame(now){
     }
   }
 
-  const tx = THREE.MathUtils.clamp(S.mouseX? (S.mouseX/innerWidth-0.5)*2 : 0, -1, 1);
-  const ty = THREE.MathUtils.clamp(S.mouseY? (S.mouseY/innerHeight-0.5)*2 : 0, -1, 1);
-  S.eyeX += (tx-S.eyeX)*Math.min(1,dt/120);
-  S.eyeY += (ty-S.eyeY)*Math.min(1,dt/120);
+  // 鼠标跟随（屏幕 Y 向下为正）；打字时用键盘目标覆盖，暂停鼠标跟随
+  const act = S.typing; // 0=平时跟随鼠标，1=正在打字看键盘
+  const mx = THREE.MathUtils.clamp(S.mouseX? (S.mouseX/innerWidth-0.5)*2 : 0, -1, 1);
+  const my = THREE.MathUtils.clamp(S.mouseY? (S.mouseY/innerHeight-0.5)*2 : 0, -1, 1);
+  const keySide = S.flash.side === "L" ? -1 : 1;
+  const targetX = THREE.MathUtils.lerp(mx, keySide*0.12, act);
+  const targetY = THREE.MathUtils.lerp(my, 0.95, act); // 向下看向键盘
+  S.eyeX += (targetX-S.eyeX)*Math.min(1,dt/120);
+  S.eyeY += (targetY-S.eyeY)*Math.min(1,dt/120);
 
   // 呼吸 / 头部
   cat.scale.y = 1 + Math.sin(now/900)*0.012;
+  // 打字时身体前倾向键盘，停打后回正
+  const lean = act*0.16;
+  cat.rotation.x += (lean - cat.rotation.x)*Math.min(1,dt/200);
   headGroup.rotation.y += (S.eyeX*0.22 - headGroup.rotation.y)*Math.min(1,dt/180);
-  headGroup.rotation.x += (-S.eyeY*0.12 - headGroup.rotation.x)*Math.min(1,dt/180);
+  // 修正：绕 X 正旋转=低头。鼠标向下(my>0)应低头，故用 +S.eyeY；打字时叠加俯身看键盘
+  const pitch = THREE.MathUtils.lerp(S.eyeY*0.14, 0.36, act);
+  headGroup.rotation.x += (pitch - headGroup.rotation.x)*Math.min(1,dt/180);
   headGroup.rotation.z = Math.sin(now/2600)*0.02;
 
   // 眼睛：摸头时彻底闭眼享受（隐藏眼球，只留弯月弧线）；睡觉/眨眼时压扁闭眼

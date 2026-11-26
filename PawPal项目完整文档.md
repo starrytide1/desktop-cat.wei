@@ -2,7 +2,7 @@
 
 > 一份从「GitHub 爆火打字小猫」调研开始，到零基础搭建工具链、开发原生桌宠、接入 MCP、扩展外观编辑器、制作桌面快捷方式、安全审计加固，再到**合规化改造**的全流程记录。
 >
-> 文档日期：2026-11-26　｜　项目版本：0.1.0　｜　最终交付：`deliverables/PawPal.exe`（9.2 MB，见第 18 章）
+> 文档日期：2026-11-26　｜　项目版本：0.1.0　｜　最终交付：`deliverables/PawPal.exe`（9.2 MB，见第 19 章）
 >
 > ⚠️ **当前版本约束状态**：无网络、无端口、无剪贴板/截图/目录遍历、持久化仅 `%APPDATA%/PawPal/config.json` 单文件、无管理员权限与自动更新。**关于全局键盘监听**：最初按约束移除；后用户明确授权放宽，现用 `rdev`（Windows 低级键盘钩子 `WH_KEYBOARD_LL`）实现全局键盘跟随，并可在设置中开关。详见第 18 章。本文第七、九章的全局钩子/HTTP 端口/localStorage 属历史实现。
 
@@ -1025,7 +1025,38 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 - **闭眼**：摸头截图确认眼球完全消失、只剩弯月弧线，小舌头与爱心正常。
 - 控制台无异常。
 
-**当前最终交付**：`deliverables/PawPal.exe`（9.2 MB，SHA-256 `25627e2a7d2caa94d1a8be1aae507da441b492e12f1e8788680d6b7c0376f95c`）。
+**当时交付**：`deliverables/PawPal.exe`（9.2 MB，SHA-256 `25627e2a7d2caa94d1a8be1aae507da441b492e12f1e8788680d6b7c0376f95c`）；现已被第 19 章版本替代。
+
+---
+
+## 19. 眼睛跟随方向修正、键帽弹字跳跃与打字姿态（2026-11-26 第六轮迭代）
+
+### 19.1 需求
+
+1. 猫咪眼睛对鼠标的跟随，上下方向相反——需要修正。
+2. 打字时字符要有键盘帽外观，在猫咪身旁动态跳跃显示，不局限在键盘上。
+3. 打字时猫咪的眼睛看向键盘、身体也倾斜到键盘上，此时不跟随鼠标。
+
+### 19.2 实现
+
+| 位置 | 改动 |
+|---|---|
+| `main.js` 动画循环头部俯仰 | 原 `headGroup.rotation.x = -S.eyeY*0.12`：屏幕 Y 向下为正、绕 X 正旋转为低头，负号导致鼠标向下却抬头。改为 `pitch = lerp(S.eyeY*0.14, 0.36, act)`，向下看时低头、方向正确；打字时叠加到 0.36 俯身看键盘 |
+| `main.js` 弹字系统 | `popupsGroup` 由 `keyboard.add` 改为 `root.add`，弹字脱离键盘坐标系；`symbolTexture` 重画为圆角键帽面 + 底部厚度 + 描边 + 字符（160×140 画布） |
+| `main.js` `spawnSymbol(side,label)` | 不再依赖键位 idx，改为按左右手在猫身旁（`x=±(1.55~2.1)`）生成键帽，带横向漂移 `vx`、上抛初速 `vy`、重力 `g≈8.4` 的抛物跳跃与轻微旋转；隐私模式仍只弹 `•` |
+| `main.js` 状态机 | `S` 新增 `typing`；`pressKey` 置 1，动画循环每帧 `typing -= dt/700`，停打 0.7s 后归零 |
+| `main.js` 眼睛目标 | `targetX/targetY = lerp(鼠标值, 键盘值, act)`，打字时覆盖为看键盘（Y=0.95、X=左右键侧 ±0.12），暂停鼠标跟随；虹膜/瞳孔随 eyeY 下移 |
+| `main.js` 身体前倾 | `cat.rotation.x = lerp(0, 0.16, act)`，打字时前倾、停打回正 |
+| `main.js` 只读调试接口 | 新增 `window.__pawpalDebug()` 暴露 headPitch/bodyLean/eyeX/eyeY/typing/popups 等只读状态，便于自动化验证（与既有 `__pawpalPressKey` 同类 hook，无副作用） |
+
+### 19.3 验证
+
+- `node --check`、`npm run build`、`npx tauri build` 全通过，MSI/NSIS 安装包产出，控制台无异常。
+- **眼睛方向**（CDP 读取数值，viewport 744×465）：鼠标底部 `headPitch=+0.125`、`eyeY=+0.91`（低头下看）；鼠标顶部 `headPitch=-0.125`、`eyeY=-0.91`（抬头上看）——上下方向正确。
+- **打字姿态**：连打 6 键后 `typing=0.98`、`headPitch=+0.24`（低头）、`bodyLean=+0.11`（前倾）、`eyeY=+0.67`（看键盘）；停打 1.2s 后 `typing=0`、姿态回正。
+- **键帽弹字**：截图确认 A/S/L 键帽以带边框的小键帽外观在猫咪左右身旁抛物跳跃，不再局限于键盘；popups 数量随打字增减。
+
+**当前最终交付**：`deliverables/PawPal.exe`（9.2 MB，SHA-256 `a3ad2420ec317b84bb69347b1f6e4f477cbcdbdf00b6dc05b0819ecfc69fb7d4`）。
 
 ---
 
