@@ -58,6 +58,13 @@ npx tauri build
 
 生成的 exe 位于 `pawpal/src-tauri/target/release/` 下。
 
+需要重建桌面「外观编辑器」快捷方式时，另需构建期依赖 `pylnk3==0.4.3`（仅生成 `.lnk`，不进入运行时）：
+
+```bash
+python -m pip install pylnk3==0.4.3
+python pawpal/make_shortcut.py
+```
+
 ### MCP 接入
 
 ```bash

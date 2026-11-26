@@ -90,6 +90,8 @@ npm install
 
 桌面上的 **「PawPal 外观编辑器」** 快捷方式指向 `PawPal.exe --appearance`，双击即打开设置面板并定位到外观编辑器（橙色高亮）。启动参数只驱动本进程内的事件，无跨进程转发、无端口。若移动了 exe，可运行 `python make_shortcut.py` 重建。
 
+> 生成脚本需要构建期依赖 **pylnk3 0.4.3**（`python -m pip install pylnk3==0.4.3`），用于写出带 `LinkTargetIDList` 的标准 `.lnk`。早期纯标准库版本只写 LinkInfo，Windows Shell 会拒绝执行（双击无反应、提示“没有应用程序与此操作的指定文件有关联”），现已修复；未安装 pylnk3 时会回退到该旧实现并打印警告。pylnk3 仅在生成快捷方式时使用，不进入 exe、不参与运行时、不发起网络请求。
+
 ## 安全边界
 
 - 输入只来自应用窗口自身的 DOM 事件，全局输入监听 API 一律不用。

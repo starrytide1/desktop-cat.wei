@@ -795,7 +795,7 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 | `pawpal/src/main.js:642` | `URL.createObjectURL(file)` | 为用户点选的单张图片创建内存 Blob URL | 浏览器内存对象，非磁盘遍历 |
 | `pawpal/src/main.js:643,666` | `new Image()` + `img.src = url` | 在页面内解码该 Blob 用于预览与取色 | 仅用户显式选择的文件 |
 | `pawpal/src/main.js:674` | `await invoke("get_config_path")` | 查询配置文件路径用于界面状态显示 | 只返回路径字符串，不读内容 |
-| `pawpal/make_shortcut.py:93,99-100`（构建期） | `os.path.isfile(exe)` / `os.path.isdir(desktop)` | 生成快捷方式前检查目标 exe 与桌面目录存在 | 一次性构建脚本，不进入运行时 |
+| `pawpal/make_shortcut.py:102,109`（构建期） | `os.path.isfile(exe)` / `os.path.isdir(desktop)` | 生成快捷方式前检查目标 exe 与桌面目录存在 | 一次性构建脚本，不进入运行时 |
 | `desktop-cat/index.html:149`（早期网页原型） | `localStorage.getItem("pawpal-settings")` | 原型页读取本地设置 | **不在最终 exe 中** |
 
 补充：`pawpal/src-tauri/src/main.rs:27` 读取 `APPDATA` 环境变量用于拼出固定路径；`pawpal/mcp-server.mjs:38` 读取同名环境变量作为兜底。二者均非文件内容读取。`pawpal/mcp-server.mjs:118` 的 `fs.closeSync(fd)` 是关闭已打开的句柄，不是读操作。
@@ -809,7 +809,7 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 | `pawpal/mcp-server.mjs:235` | `fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })` | MCP 写入前确保配置目录存在 | 固定目录 |
 | `pawpal/mcp-server.mjs:238` | `fs.writeFileSync(CONFIG_PATH, text, "utf8")` | MCP 写唯一配置文件 | 前置 256KB 限制，无路径参数 |
 | `pawpal/src/main.js:30` | `invoke("write_config", { content: JSON.stringify(CFG) })` | 前端保存设置时经 Rust 写配置 | 前端无法指定路径 |
-| `pawpal/make_shortcut.py:111-112`（构建期） | `open(out, "wb")` / `fh.write(data)` | 生成桌面快捷方式 `PawPal 外观编辑器.lnk` | 一次性构建脚本，不进入运行时 |
+| `pawpal/make_shortcut.py:124-125`（构建期，回退分支） | `open(out, "wb")` / `fh.write(data)` | 生成桌面快捷方式 `PawPal 外观编辑器.lnk` | 一次性构建脚本，不进入运行时；pylnk3 可用时改走 `:133-140` 写标准 Shell Link |
 | `desktop-cat/index.html:152`（早期网页原型） | `localStorage.setItem("pawpal-settings", ...)` | 原型页保存设置 | **不在最终 exe 中** |
 
 ### 14.3 网络请求
@@ -858,6 +858,42 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 ### 14.6 写注册表
 
 **无。** 源码中不存在 `reg add` / `RegSetValue` / `winreg` / `HKEY_*` / `HKCU` / `HKLM` 等注册表写入调用，也没有任何安装后自启动项写入。NSIS 配置仅声明 `installMode: "currentUser"`（用户级安装），不写注册表自启动键。
+
+---
+
+## 15. 桌面快捷方式打不开：排查与修复
+
+### 15.1 现象
+
+用户反馈「桌面上打不开」。直接双击桌面 `PawPal 外观编辑器.lnk` 无反应。
+
+### 15.2 排查证据
+
+| 检查 | 结果 |
+|---|---|
+| exe 文件、桌面 `.lnk`、配置文件 | 均存在；`%APPDATA%/PawPal/config.json` 内容正常 |
+| 直接运行 `PawPal.exe --appearance` | 5 秒超时未退出，进程常驻 → **exe 本身正常** |
+| `cmd /c start` 打开 `.lnk` | 报「系统无法执行指定的程序」 |
+| `os.startfile()` 打开 `.lnk` | `OSError: [WinError 1155] 没有应用程序与此操作的指定文件有关联` → **Windows Shell 拒绝识别该快捷方式** |
+| 解析 `.lnk` 二进制 | 503 B，`LinkFlags = 0xf6`（HasLinkInfo/Name/WorkDir/Args/Icon/Unicode），**无 HasLinkTargetIDList** |
+| 对照系统自带 `.lnk` | 均带 IDList 或额外属性块；MS-SHLLINK 规定 Shell 解析时优先使用 LinkTargetIDList |
+
+### 15.3 根因
+
+早期因 PowerShell COM 被安全策略拦截，改用纯标准库手写 Shell Link 二进制。该实现只填了 `LinkInfo`，没有 `LinkTargetIDList`。文件虽能被自己解析出路径，但 Windows Shell 在 `ShellExecute` 时不接受它，因此双击毫无反应。这与 exe、配置、权限、SmartScreen 都无关。
+
+### 15.4 修复
+
+- 引入构建期依赖 **pylnk3 0.4.3**（固定版本）生成标准 `.lnk`：含 `HasLinkTargetIDList`，709 B。
+- 更新 `pawpal/make_shortcut.py`：优先用 pylnk3；未安装时回退旧实现并打印警告；自检要求 `LinkFlags & 0x01`，避免再次产出无效快捷方式。
+- 桌面放置新图标 **`PawPal 外观编辑器（可用）.lnk`**（709 B）并实测可启动；原 503 B 无效图标未改动，可自行删除。
+- 根 `README.md`、`pawpal/README.md` 补充构建期依赖说明；项目完整文档新增本章并同步第 14 章中因脚本改动而变化的行号。
+- pylnk3 只在生成快捷方式时运行，不进入 exe、不参与运行时、不发起网络请求，不影响前述五条合规约束。
+
+### 15.5 验证
+
+- `python pawpal/make_shortcut.py <路径>` → `flags 0x1b5`、`idlist_ok True`、自检通过。
+- `os.startfile()` 打开新桌面图标 → PawPal.exe 进程出现并常驻，确认双击可用。
 
 ---
 

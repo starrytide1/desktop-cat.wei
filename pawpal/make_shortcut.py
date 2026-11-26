@@ -1,10 +1,19 @@
-"""生成 Windows .lnk 快捷方式（纯标准库，不依赖 COM / WScript.Shell）。
+"""生成 Windows .lnk 快捷方式（不依赖 COM / WScript.Shell）。
 
 用法:
     python make_shortcut.py [输出路径]
 
 默认在桌面生成「PawPal 外观编辑器.lnk」，指向同目录 deliverables 中的 PawPal.exe，
 并带上 --appearance 参数，双击即可直接打开桌宠的外观编辑器。
+
+重要：Windows Shell 解析 .lnk 时优先使用 LinkTargetIDList。早期纯标准库实现只写了
+LinkInfo，生成的文件虽能被解析出路径，但 ShellExecute 会报「没有应用程序与此操作
+的指定文件有关联」，双击无反应。现在优先使用 pylnk3==0.4.3（仅构建期依赖，不进入
+运行时、不联网）生成带 IDList 的标准 Shell Link：
+
+    python -m pip install pylnk3==0.4.3
+
+未安装时回退到旧的纯标准库实现，并打印警告；回退产物可能同样无法被 Shell 执行。
 """
 import os
 import struct
@@ -101,25 +110,41 @@ def main():
             raise SystemExit(f"找不到桌面目录: {desktop}")
         out = os.path.join(desktop, "PawPal 外观编辑器.lnk")
 
-    data = build_lnk(
-        target=exe,
-        arguments="--appearance",
-        working_dir=os.path.dirname(exe),
-        description="PawPal 外观编辑器",
-        icon_location=f"{exe},0",
-    )
-    with open(out, "wb") as fh:
-        fh.write(data)
+    try:
+        from pylnk3 import for_file
+    except ImportError:
+        print("警告：未安装 pylnk3==0.4.3，回退到纯标准库实现；该实现缺少 IDList，可能被 Windows Shell 拒绝。")
+        data = build_lnk(
+            target=exe,
+            arguments="--appearance",
+            working_dir=os.path.dirname(exe),
+            description="PawPal 外观编辑器",
+            icon_location=f"{exe},0",
+        )
+        with open(out, "wb") as fh:
+            fh.write(data)
+        # 自检：确认结构可被解析回预期值
+        assert data[:4] == u32(0x4C)
+        assert data[4:20] == CLSID
+        assert struct.unpack_from("<I", data, 20)[0] & 0x02
+        assert exe.encode("mbcs") in data
+        assert "--appearance".encode("utf-16le") in data
+    else:
+        lnk = for_file(
+            exe,
+            arguments="--appearance",
+            description="PawPal 外观编辑器",
+            work_dir=os.path.dirname(exe),
+        )
+        lnk.save(out)
+        with open(out, "rb") as fh:
+            data = fh.read()
+        # 自检：必须带 HasLinkTargetIDList，否则 ShellExecute 会拒绝执行
+        assert struct.unpack_from("<I", data, 20)[0] & 0x01
+
     print(f"已生成: {out}")
     print(f"目标: {exe} --appearance")
     print(f"大小: {len(data)} bytes")
-
-    # 自检：确认结构可被解析回预期值
-    assert data[:4] == u32(0x4C)
-    assert data[4:20] == CLSID
-    assert struct.unpack_from("<I", data, 20)[0] & 0x02
-    assert exe.encode("mbcs") in data
-    assert "--appearance".encode("utf-16le") in data
     print("自检通过")
 
 
