@@ -1,0 +1,10 @@
+# 统一文本文件换行，避免 Windows/Linux 之间的无意义 diff
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.exe binary
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.zip binary

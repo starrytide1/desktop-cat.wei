@@ -1,0 +1,14 @@
+# Node 依赖（64 MB，可由 npm ci 还原）
+node_modules/
+
+# Rust 构建产物（约 2.4 GB，可由 cargo build 还原）
+pawpal/src-tauri/target/
+
+# 本地工作区/助手数据，不属于项目内容
+.workbuddy/
+
+# 日志与系统临时文件
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini

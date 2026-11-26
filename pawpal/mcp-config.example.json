@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pawpal": {
+      "command": "node",
+      "args": [
+        "C:/Users/user/WorkBuddy/2026-11-26-09-18-32/pawpal/mcp-server.mjs"
+      ],
+      "description": "按照片生成 PawPal 桌宠配色并热更新"
+    }
+  }
+}
