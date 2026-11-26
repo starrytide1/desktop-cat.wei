@@ -7,67 +7,113 @@
 <style>
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;background:transparent;overflow:hidden;}
-  body{width:100vw;height:100vh;user-select:none;-webkit-user-select:none;}
+  body{width:100vw;height:100vh;user-select:none;-webkit-user-select:none;font-family:"Microsoft YaHei",system-ui,sans-serif;}
   #scene{width:100%;height:100%;display:block;}
   #ui{position:fixed;inset:0;pointer-events:none;}
-  #toolbar{
-    position:absolute;top:8px;right:8px;display:none;gap:6px;pointer-events:auto;
-  }
+
+  /* 工具栏：深色玻璃质感，和 KuroCat 的深色小菜单一致 */
+  #toolbar{position:absolute;top:8px;right:8px;display:none;gap:5px;pointer-events:auto;}
   #toolbar.show{display:flex;}
   #toolbar button{
-    font:12px "Microsoft YaHei",system-ui;color:#3a3540;cursor:pointer;
-    background:rgba(255,255,255,.82);border:1px solid rgba(80,70,90,.18);
-    border-radius:8px;padding:6px 10px;backdrop-filter:blur(6px);
+    font:12px "Microsoft YaHei",system-ui;color:#d9dce6;cursor:pointer;
+    background:rgba(24,26,36,.82);border:1px solid rgba(255,255,255,.12);
+    border-radius:8px;padding:6px 10px;backdrop-filter:blur(8px);
   }
-  #toolbar button:hover{background:#fff;}
+  #toolbar button:hover{background:rgba(44,48,64,.94);border-color:rgba(200,245,66,.5);}
+  #btn-demo.on{background:#c8f542;color:#202320;border-color:#c8f542;}
+
+  /* 设置面板：紧凑深色双标签 */
   #settings{
-    position:absolute;top:44px;right:8px;width:288px;max-height:calc(100vh - 60px);
+    position:absolute;top:44px;right:8px;width:322px;max-height:calc(100vh - 60px);
     overflow:auto;pointer-events:auto;display:none;
-    background:rgba(255,253,250,.97);border:1px solid rgba(80,70,90,.16);
-    border-radius:14px;padding:14px;box-shadow:0 16px 44px rgba(60,45,70,.24);
-    font:13px "Microsoft YaHei",system-ui;color:#2c2a2e;
+    background:rgba(18,20,28,.96);border:1px solid rgba(255,255,255,.12);
+    border-radius:14px;box-shadow:0 18px 48px rgba(0,0,0,.5);
+    color:#e8e9f0;font-size:12px;
   }
   #settings.open{display:block;}
-  #settings h2{font-size:15px;margin:0 0 3px;}
-  #settings .sub{font-size:11px;color:#888;margin:0 0 12px;line-height:1.5;}
-  .grp{border-top:1px solid rgba(70,60,80,.12);padding-top:10px;margin-top:10px;}
-  .grp .title{font-size:12px;font-weight:600;color:#59535f;margin-bottom:8px;}
-  .grp.flash{outline:2px solid #ff8a5b;outline-offset:3px;border-radius:8px;background:rgba(255,138,91,.10);transition:background .25s,outline-color .25s;}
+  #settings::-webkit-scrollbar{width:6px;}
+  #settings::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:6px;}
+  .set-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:13px 14px 8px;}
+  .set-head h2{font-size:15px;margin:0;letter-spacing:.3px;}
+  .set-head .sub{font-size:10px;color:#8f93a3;margin:4px 0 0;line-height:1.5;}
+  #btn-close{
+    flex:none;width:26px;height:26px;border-radius:8px;cursor:pointer;
+    border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);
+    color:#c9ccd8;font:16px/1 system-ui;
+  }
+  #btn-close:hover{background:rgba(200,245,66,.16);color:#c8f542;}
+  .tabs{display:flex;gap:4px;padding:0 12px 10px;border-bottom:1px solid rgba(255,255,255,.08);}
+  .tab{
+    flex:1;padding:7px 0;border:0;border-radius:8px;cursor:pointer;
+    background:transparent;color:#9296a6;font:12px "Microsoft YaHei",system-ui;
+  }
+  .tab:hover{color:#dfe2ec;background:rgba(255,255,255,.05);}
+  .tab.active{background:rgba(200,245,66,.13);color:#c8f542;font-weight:600;}
+  .pane{display:none;padding:11px 12px 12px;}
+  .pane.active{display:block;}
+  .grp{border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:10px;margin-bottom:9px;background:rgba(255,255,255,.025);}
+  .grp .title{font-size:11px;font-weight:600;color:#c8f542;margin-bottom:9px;letter-spacing:.4px;}
+  .grp.flash{outline:2px solid #c8f542;outline-offset:2px;background:rgba(200,245,66,.08);transition:background .25s,outline-color .25s;}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:7px 0;font-size:11px;color:#abaebc;}
+  .row .status{margin:0;}
+  .seg{display:flex;border:1px solid rgba(255,255,255,.14);border-radius:7px;overflow:hidden;background:rgba(0,0,0,.22);}
+  .seg button{font:11px system-ui;border:0;background:transparent;padding:4px 8px;cursor:pointer;color:#9296a6;}
+  .seg button:hover{color:#e8e9f0;background:rgba(255,255,255,.07);}
+  .seg button.on{background:#c8f542;color:#202320;font-weight:600;}
+  .seg.mini button{font-size:10px;padding:3px 5px;}
   .coats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
   .coat{height:30px;border-radius:8px;border:2px solid transparent;cursor:pointer;position:relative;overflow:hidden;}
-  .coat.sel{border-color:#ff8a5b;}
-  .coat i{position:absolute;top:0;left:0;width:100%;height:100%;display:block;}
-  .coat b{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;}
-  .row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:7px 0;font-size:12px;color:#59535f;}
-  .seg{display:flex;border:1px solid rgba(70,60,80,.18);border-radius:7px;overflow:hidden;}
-  .seg button{font:11px system-ui;border:0;background:#fff;padding:4px 8px;cursor:pointer;color:#777;}
-  .seg button.on{background:#ff8a5b;color:#fff;}
-  .seg.mini button{font-size:10px;padding:3px 5px;}
-  #cat-preview{display:none;max-width:100%;max-height:86px;border-radius:8px;margin-top:7px;border:1px solid rgba(70,60,80,.14);}
-  input[type=color]{width:46px;height:24px;padding:1px;border:1px solid rgba(70,60,80,.18);border-radius:6px;background:#fff;cursor:pointer;}
-  .sw{width:34px;height:19px;border-radius:99px;background:#d8d4dd;position:relative;cursor:pointer;transition:.2s;}
-  .sw::after{content:"";position:absolute;left:3px;top:3px;width:13px;height:13px;border-radius:50%;background:#fff;transition:.2s;}
-  .sw.on{background:#7b6cf6;}
-  .sw.on::after{left:18px;}
-  input[type=range]{width:104px;accent-color:#ff8a5b;}
-  input[type=text],input[type=number]{font:12px system-ui;border:1px solid rgba(70,60,80,.18);border-radius:7px;padding:5px 7px;width:120px;}
-  .foot{display:flex;gap:6px;margin-top:12px;}
-  .foot button{flex:1;font:12px system-ui;padding:7px;border-radius:8px;border:1px solid rgba(70,60,80,.18);background:#fff;cursor:pointer;}
-  .foot button.primary{background:#ff8a5b;color:#fff;border-color:#ff8a5b;}
-  .status{font-size:10px;color:#8a8590;line-height:1.5;margin-top:6px;}
+  .coat:hover{border-color:rgba(255,255,255,.32);}
+  .coat.sel{border-color:#c8f542;}
+  /* CSP nonce 会让 WebView2 忽略内联 style 属性；用 canvas 绘制色块，不依赖内联样式 */
+  .coat canvas{display:block;width:100%;height:100%;}
+  #cat-image{width:100%;font:11px system-ui;color:#b9bdca;}
+  #cat-image::file-selector-button{
+    font:11px system-ui;border:1px solid rgba(255,255,255,.16);border-radius:7px;
+    background:rgba(255,255,255,.08);color:#dfe2ec;padding:5px 8px;margin-right:8px;cursor:pointer;
+  }
+  #cat-preview{display:none;max-width:100%;max-height:86px;border-radius:8px;margin-top:7px;border:1px solid rgba(255,255,255,.14);}
+  #cat-preview.show{display:block;}
+  #image-info{margin-top:5px;}
+  #btn-image-clear{
+    width:100%;margin-top:6px;font:11px system-ui;padding:5px;border-radius:7px;
+    border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:#7f8391;
+  }
+  #btn-image-clear:not(:disabled){color:#ff9c78;border-color:rgba(255,138,91,.5);background:rgba(255,138,91,.1);cursor:pointer;}
+  #btn-image-clear:disabled{cursor:default;}
+  input[type=color]{width:44px;height:24px;padding:1px;border:1px solid rgba(255,255,255,.16);border-radius:6px;background:rgba(255,255,255,.06);cursor:pointer;}
+  .sw{width:34px;height:19px;border-radius:99px;background:#3c4050;position:relative;cursor:pointer;transition:.2s;}
+  .sw::after{content:"";position:absolute;left:3px;top:3px;width:13px;height:13px;border-radius:50%;background:#d6d9e2;transition:.2s;}
+  .sw.on{background:#c8f542;}
+  .sw.on::after{left:18px;background:#202320;}
+  input[type=range]{width:112px;accent-color:#c8f542;}
+  input[type=text],input[type=number]{
+    font:11px system-ui;border:1px solid rgba(255,255,255,.14);border-radius:7px;
+    padding:5px 7px;width:118px;background:rgba(0,0,0,.25);color:#e8e9f0;
+  }
+  .foot{display:flex;gap:6px;margin-top:10px;}
+  .foot button{
+    flex:1;font:11px system-ui;padding:7px;border-radius:8px;cursor:pointer;
+    border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#d9dce6;
+  }
+  .foot button:hover{background:rgba(255,255,255,.12);}
+  .foot button.primary{background:#c8f542;color:#202320;border-color:#c8f542;font-weight:600;}
+  .foot button.primary:hover{background:#d7ff6a;}
+  .status{font-size:10px;color:#7f8391;line-height:1.5;margin-top:6px;}
   #toast{
     position:absolute;left:50%;top:22px;transform:translate(-50%,-12px);
-    font:12px "Microsoft YaHei",system-ui;color:#fff;background:rgba(60,50,70,.88);
+    font:12px "Microsoft YaHei",system-ui;color:#202320;background:#c8f542;
     padding:8px 16px;border-radius:99px;opacity:0;transition:.28s;pointer-events:none;white-space:nowrap;
+    box-shadow:0 8px 24px rgba(0,0,0,.35);
   }
   #toast.show{opacity:1;transform:translate(-50%,0);}
   #tip{
     position:absolute;left:50%;bottom:6px;transform:translateX(-50%);
-    font:11px "Microsoft YaHei",system-ui;color:rgba(90,80,100,.6);
-    background:rgba(255,255,255,.6);padding:5px 11px;border-radius:99px;white-space:nowrap;
+    font:11px "Microsoft YaHei",system-ui;color:#a9adbb;
+    background:rgba(18,20,28,.7);padding:5px 11px;border-radius:99px;white-space:nowrap;
   }
 </style>
-  <script type="module" crossorigin src="./assets/index-C2yTqXo_.js"></script>
+  <script type="module" crossorigin src="./assets/index-CNEk2SFB.js"></script>
 </head>
 <body>
 <canvas id="scene"></canvas>
@@ -80,54 +126,73 @@
     <button id="btn-set">设置</button>
   </div>
   <div id="settings">
-    <h2>PawPal 设置</h2>
-    <p class="sub">原生桌宠 · 仅响应本窗口内键鼠 · 所有数据只存本机</p>
-    <div class="row"><span>MCP 控制接口</span><span class="status" id="mcp-status" style="margin:0">检测中…</span></div>
-    <div class="grp">
-      <div class="title">毛色</div>
-      <div class="coats" id="coats"></div>
+    <div class="set-head">
+      <div>
+        <h2>PawPal 设置</h2>
+        <p class="sub">原生桌宠 · 全局键盘跟随可开关 · 数据只存本机</p>
+      </div>
+      <button id="btn-close" title="关闭">×</button>
     </div>
-    <div class="grp">
-      <div class="title">上传图片生成相似小猫</div>
-      <input type="file" id="cat-image" accept="image/*" style="width:100%;font:11px system-ui;">
-      <img id="cat-preview" alt="图片预览">
-      <div class="status" id="image-info" style="margin-top:5px">选择一张 PNG/JPEG，或把图片拖到桌宠上。只在本机取色分析。</div>
+    <div class="tabs">
+      <button type="button" class="tab active" data-tab="appearance">外观</button>
+      <button type="button" class="tab" data-tab="system">键盘 / 系统</button>
     </div>
-    <div class="grp" id="appearance-grp">
-      <div class="title">外观编辑器 · 部件组合</div>
-      <div class="row"><span>耳型</span><div class="seg mini" id="look-ear"><button data-v="pointy">尖耳</button><button data-v="round">圆耳</button><button data-v="fold">折耳</button><button data-v="tufted">簇耳</button></div></div>
-      <div class="row"><span>眼型</span><div class="seg mini" id="look-eye"><button data-v="round">圆眼</button><button data-v="wide">大眼</button><button data-v="sleepy">眯眼</button><button data-v="hetero">异瞳</button></div></div>
-      <div class="row"><span>尾巴</span><div class="seg mini" id="look-tail"><button data-v="curved">弯尾</button><button data-v="short">短尾</button><button data-v="fluffy">蓬尾</button><button data-v="curled">卷尾</button></div></div>
-      <div class="row"><span>体态</span><div class="seg mini" id="look-body"><button data-v="slim">瘦</button><button data-v="normal">标准</button><button data-v="chubby">圆润</button></div></div>
-      <div class="row"><span>花纹</span><div class="seg mini" id="look-pattern"><button data-v="none">纯色</button><button data-v="tabby">虎斑</button><button data-v="tuxedo">奶牛</button><button data-v="calico">三花</button><button data-v="patches">斑点</button></div></div>
-      <div class="row"><span>配饰</span><div class="seg mini" id="look-accessory"><button data-v="none">无</button><button data-v="bowtie">领结</button><button data-v="scarf">围巾</button><button data-v="hat">帽子</button><button data-v="collar">项圈</button></div></div>
-      <div class="row"><span>配饰颜色</span><input type="color" id="look-acccolor" value="#E86E82"></div>
-      <div class="row"><span>头身比</span><input type="range" id="look-head" min="80" max="130" value="100"></div>
-      <div class="foot"><button id="btn-random">随机一只</button><button id="btn-look-reset">造型复位</button></div>
+
+    <div class="pane active" id="pane-appearance">
+      <div class="grp">
+        <div class="title">毛色</div>
+        <div class="coats" id="coats"></div>
+      </div>
+      <div class="grp">
+        <div class="title">上传图片生成相似小猫</div>
+        <input type="file" id="cat-image" accept="image/*">
+        <img id="cat-preview" alt="图片预览">
+        <button type="button" id="btn-image-clear" disabled>移除图片 · 小猫恢复默认</button>
+        <div class="status" id="image-info">选择一张 PNG/JPEG，或把图片拖到桌宠上。只在本机取色分析。</div>
+      </div>
+      <div class="grp" id="appearance-grp">
+        <div class="title">外观编辑器 · 部件组合</div>
+        <div class="row"><span>耳型</span><div class="seg mini" id="look-ear"><button data-v="pointy">尖耳</button><button data-v="round">圆耳</button><button data-v="fold">折耳</button><button data-v="tufted">簇耳</button></div></div>
+        <div class="row"><span>眼型</span><div class="seg mini" id="look-eye"><button data-v="round">圆眼</button><button data-v="sleepy">眯眼</button><button data-v="hetero">异瞳</button></div></div>
+        <div class="row"><span>尾巴</span><div class="seg mini" id="look-tail"><button data-v="curved">弯尾</button><button data-v="short">短尾</button><button data-v="fluffy">蓬尾</button><button data-v="curled">卷尾</button></div></div>
+        <div class="row"><span>体态</span><div class="seg mini" id="look-body"><button data-v="slim">瘦</button><button data-v="normal">标准</button><button data-v="chubby">圆润</button></div></div>
+        <div class="row"><span>花纹</span><div class="seg mini" id="look-pattern"><button data-v="none">纯色</button><button data-v="tabby">虎斑</button><button data-v="tuxedo">奶牛</button><button data-v="calico">三花</button><button data-v="patches">斑点</button></div></div>
+        <div class="row"><span>配饰</span><div class="seg mini" id="look-accessory"><button data-v="none">无</button><button data-v="bowtie">领结</button><button data-v="scarf">围巾</button><button data-v="hat">帽子</button><button data-v="collar">项圈</button></div></div>
+        <div class="row"><span>配饰颜色</span><input type="color" id="look-acccolor" value="#E86E82"></div>
+        <div class="row"><span>头身比</span><input type="range" id="look-head" min="80" max="130" value="100"></div>
+        <div class="foot"><button id="btn-random">随机一只</button><button id="btn-look-reset">造型复位</button></div>
+      </div>
     </div>
-    <div class="grp">
-      <div class="title">行为</div>
-      <div class="row"><span>键盘布局</span><div class="seg" id="layout"><button data-v="65">65%</button><button data-v="104">104%</button></div></div>
-      <div class="row"><span>睡意</span><div class="seg" id="sleep"><button data-v="4000">快</button><button data-v="8000">中</button><button data-v="15000">慢</button></div></div>
-      <div class="row"><span>窗口大小</span><input type="range" id="size" min="60" max="160" value="100"></div>
-      <div class="row"><span>摸猫呼噜</span><div class="sw" id="sw-purr"></div></div>
-      <div class="row"><span>睡觉呼噜</span><div class="sw" id="sw-sleeppurr"></div></div>
-      <div class="row"><span>随机动作</span><div class="sw" id="sw-idle"></div></div>
-      <div class="row"><span>全局键盘跟随</span><div class="sw" id="sw-globalkeys"></div></div>
-      <div class="row"><span>隐私模式</span><div class="sw" id="sw-privacy"></div></div>
-      <div class="row"><span>始终置顶</span><div class="sw" id="sw-top"></div></div>
+
+    <div class="pane" id="pane-system">
+      <div class="grp">
+        <div class="title">键盘与窗口</div>
+        <div class="row"><span>键盘布局</span><div class="seg" id="layout"><button data-v="65">65%</button><button data-v="104">104%</button></div></div>
+        <div class="row"><span>睡意</span><div class="seg" id="sleep"><button data-v="4000">快</button><button data-v="8000">中</button><button data-v="15000">慢</button></div></div>
+        <div class="row"><span>窗口大小</span><input type="range" id="size" min="60" max="160" value="100"></div>
+        <div class="row"><span>全局键盘跟随</span><div class="sw" id="sw-globalkeys"></div></div>
+        <div class="row"><span>隐私模式</span><div class="sw" id="sw-privacy"></div></div>
+        <div class="row"><span>始终置顶</span><div class="sw" id="sw-top"></div></div>
+      </div>
+      <div class="grp">
+        <div class="title">声音与动作</div>
+        <div class="row"><span>摸猫呼噜</span><div class="sw" id="sw-purr"></div></div>
+        <div class="row"><span>睡觉呼噜</span><div class="sw" id="sw-sleeppurr"></div></div>
+        <div class="row"><span>随机动作</span><div class="sw" id="sw-idle"></div></div>
+      </div>
+      <div class="grp">
+        <div class="title">语音提醒</div>
+        <div class="row"><span>开启</span><div class="sw" id="sw-remind"></div></div>
+        <div class="row"><span>间隔(分钟)</span><input type="number" id="rm-min" min="1" max="180" value="45"></div>
+        <div class="row"><span>内容</span><input type="text" id="rm-text" value="该起来活动一下啦"></div>
+      </div>
+      <div class="grp">
+        <div class="title">连接状态</div>
+        <div class="row"><span>MCP 控制接口</span><span class="status" id="mcp-status">检测中…</span></div>
+        <div class="status" id="status">窗口内输入监听已就绪</div>
+      </div>
+      <div class="foot"><button id="btn-reset">恢复默认设置</button></div>
     </div>
-    <div class="grp">
-      <div class="title">语音提醒</div>
-      <div class="row"><span>开启</span><div class="sw" id="sw-remind"></div></div>
-      <div class="row"><span>间隔(分钟)</span><input type="number" id="rm-min" min="1" max="180" value="45"></div>
-      <div class="row"><span>内容</span><input type="text" id="rm-text" value="该起来活动一下啦"></div>
-    </div>
-    <div class="foot">
-      <button id="btn-reset">恢复默认</button>
-      <button id="btn-close" class="primary">完成</button>
-    </div>
-    <div class="status" id="status">窗口内输入监听已就绪</div>
   </div>
   <div id="tip">拖动身体移动 · 按住猫头摸摸 · +/- 缩放 · 窗口内打字 · 右键设置</div>
 </div>

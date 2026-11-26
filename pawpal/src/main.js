@@ -7,10 +7,11 @@ const DEFAULT = {
   coat: "orange", layout: 65, sleep: 8000, size: 100,
   purr: true, sleeppurr: true, idle: true, privacy: false, top: true, globalKeys: true,
   remind: false, rmMin: 45, rmText: "该起来活动一下啦",
+  lookVersion: 2, // 造型体系升级标记：旧配置首次启动会切换到新版圆润奶猫造型
 };
 const DEFAULT_LOOK = {
   ear: "pointy", eye: "round", tail: "curved", body: "normal",
-  headScale: 1, accessory: "none", accColor: 0xE86E82,
+  headScale: 1.04, accessory: "none", accColor: 0xE86E82,
   pattern: "none", patternSeed: 7,
 };
 // 合规：唯一持久化位置是 %APPDATA%/PawPal/config.json（由 Rust 端 read_config/write_config 管理）。
@@ -24,7 +25,14 @@ function mergeConfig(raw) {
   // 旧版本配置里可能残留 pass:true；穿透功能已移除，读入时统一清掉，
   // 避免旧配置导致窗口忽略鼠标（设置按钮点不开）。
   delete cfg.pass;
-  cfg.look = Object.assign({}, DEFAULT_LOOK, raw.look || {});
+  // 造型体系升级：旧配置（无 lookVersion 或低于 2）强制切到新版圆润奶猫造型，
+  // 老用户的“圆耳+眯眼”等旧造型不会再让新 exe 看起来很难看。其余设置保留。
+  if (Number(cfg.lookVersion || 0) < 2) {
+    cfg.look = Object.assign({}, DEFAULT_LOOK);
+    cfg.lookVersion = 2;
+  } else {
+    cfg.look = Object.assign({}, DEFAULT_LOOK, raw.look || {});
+  }
   CFG = cfg;
 }
 
@@ -94,6 +102,10 @@ const M = {
   fur: mat(0xF4A34C), shade: mat(0xD9822E), light: mat(0xFFD9A0),
   belly: mat(0xFFF1DC), ear: mat(0xF3A0A4), eye: mat(0x4E8E5B),
   line: mat(0xC4732B), black: mat(0x1d1a20), white: mat(0xffffff),
+  // 蓝白萌眼：眼线/虹膜/瞳孔全部蓝色系，去掉棕色与黑色
+  eyeSocket: mat(0x9CCBEC), pupil: mat(0x3E86C4),
+  sclera: mat(0xFFFDF7, { roughness:0.34 }), limbal: mat(0x5599D0),
+  irisBlue: mat(0xCAE8FA), irisIce: mat(0xE4F4FF),
   nose: mat(0xE88b92), face: mat(0x6d4a42), keycap: mat(0x6b6573), keybody: mat(0x38353f),
   mouseBody: mat(0xf4f2f6), mouseWheel: mat(0xb9b4c2),
   eye2: mat(0x4FA9D6), patch1: mat(0xE69A3C), patch2: mat(0x3A3740), acc: mat(0xE86E82), bell: mat(0xF2C14E),
@@ -121,17 +133,57 @@ function cone(r, h, material, seg = 16) {
   return new THREE.Mesh(new THREE.ConeGeometry(r, h, seg), material);
 }
 
+// 变半径管：用来画从根部到尖端逐渐变细的猫尾，避免默认 TubeGeometry 的“等粗香肠”观感
+function taperedTube(curve, tubularSegments, radialSegments, radiusStart, radiusEnd) {
+  const frames = curve.computeFrenetFrames(tubularSegments, false);
+  const positions = [], normals = [], uvs = [], indices = [];
+  for (let i = 0; i <= tubularSegments; i++) {
+    const t = i / tubularSegments;
+    const p = curve.getPointAt(t);
+    const r = THREE.MathUtils.lerp(radiusStart, radiusEnd, Math.pow(t, 0.75));
+    const N = frames.normals[i], B = frames.binormals[i];
+    for (let j = 0; j <= radialSegments; j++) {
+      const v = j / radialSegments * Math.PI * 2;
+      const n = N.clone().multiplyScalar(-Math.cos(v)).add(B.clone().multiplyScalar(Math.sin(v))).normalize();
+      positions.push(p.x + r*n.x, p.y + r*n.y, p.z + r*n.z);
+      normals.push(n.x, n.y, n.z);
+      uvs.push(t, j / radialSegments);
+    }
+  }
+  for (let i = 1; i <= tubularSegments; i++) {
+    for (let j = 1; j <= radialSegments; j++) {
+      const a = (radialSegments+1)*(i-1) + (j-1);
+      const b = (radialSegments+1)*i + (j-1);
+      const c = (radialSegments+1)*i + j;
+      const d = (radialSegments+1)*(i-1) + j;
+      indices.push(a,b,d, b,c,d);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(indices);
+  return g;
+}
+
 /* ---- 猫：可组合部件系统 ---- */
 const cat = new THREE.Group();
 root.add(cat);
 
-const body = sphere(1.16, M.fur);
-body.position.y = 0.1;
+// KuroCat 风格的坐姿梨形身体：肩窄、下摆圆，侧面略扁
+const bodyProfile = [
+  [0,-1.16], [0.48,-1.13], [0.82,-0.98], [1.02,-0.62],
+  [1.06,-0.18], [0.96,0.34], [0.76,0.78], [0.5,1.0], [0,1.06],
+].map(([x,y]) => new THREE.Vector2(x,y));
+const body = new THREE.Mesh(new THREE.LatheGeometry(bodyProfile, 36), M.fur);
+body.geometry.scale(1, 1, 0.82);
+body.position.y = 0.06;
 cat.add(body);
 
-const belly = sphere(0.86, M.belly);
-belly.scale.set(0.95, 0.86, 0.55);
-belly.position.set(0, -0.05, 0.74);
+const belly = sphere(0.9, M.belly);
+belly.scale.set(0.86, 0.92, 0.3);
+belly.position.set(0, -0.34, 0.74);
 cat.add(belly);
 
 const patternBodyHolder = new THREE.Group();
@@ -142,12 +194,27 @@ const tailHolder = new THREE.Group();
 cat.add(tailHolder);
 
 const headGroup = new THREE.Group();
-headGroup.position.set(0, 1.72, 0.16);
+headGroup.position.set(0, 1.8, 0.12);
 cat.add(headGroup);
 
-const head = sphere(1.02, M.fur);
-head.scale.set(1.0, 0.94, 0.9);
+// 圆润奶猫头：更大更饱满的圆脸，纵向略压、横向略宽，正面接近心形
+const head = sphere(1.16, M.fur);
+head.scale.set(1.02, 1.0, 0.92);
 headGroup.add(head);
+
+// 贴合脸颊：与头同色的圆润下颊，融进轮廓而不是独立贴在脸上的球
+for (const s of [-1,1]) {
+  const cheek = sphere(0.5, M.fur, 24);
+  cheek.scale.set(0.98, 0.72, 0.6);
+  cheek.position.set(s*0.6, -0.34, 0.32);
+  headGroup.add(cheek);
+}
+
+// 柔和口鼻垫：一整块浅色椭圆取代原来的两团白球，更干净；配一个小下巴
+const muzzle = sphere(0.5, M.belly, 24);
+muzzle.scale.set(1.05, 0.62, 0.5); muzzle.position.set(0, -0.33, 0.86); headGroup.add(muzzle);
+const chin = sphere(0.26, M.belly, 20);
+chin.scale.set(1.0, 0.52, 0.46); chin.position.set(0, -0.58, 0.82); headGroup.add(chin);
 
 const patternHeadHolder = new THREE.Group();
 const earHolder = new THREE.Group();
@@ -155,45 +222,42 @@ const eyeHolder = new THREE.Group();
 const accHeadHolder = new THREE.Group();
 headGroup.add(patternHeadHolder, earHolder, eyeHolder, accHeadHolder);
 
-// 腮红 / 鼻子 / 嘴 / 胡须（固定部件）
-const blushL = sphere(0.15, mat(0xF08C96,{transparent:true,opacity:0.55}));
-blushL.scale.set(1.2,0.6,0.3); blushL.position.set(-0.62,-0.2,0.82); headGroup.add(blushL);
-const blushR = blushL.clone(); blushR.position.x = 0.62; headGroup.add(blushR);
+// 淡粉腮红（摸头时加深，动画循环里会调整透明度）
+const blushL = sphere(0.17, mat(0xF08C96,{transparent:true,opacity:0.42}));
+blushL.scale.set(1.2,0.66,0.28); blushL.position.set(-0.72,-0.3,0.78); headGroup.add(blushL);
+const blushR = blushL.clone(); blushR.position.x = 0.72; headGroup.add(blushR);
 
-const nose = cone(0.11, 0.14, M.nose, 3);
-nose.rotation.x = Math.PI; nose.position.set(0, -0.16, 1.0); headGroup.add(nose);
+// 粉嫩倒三角小鼻：用扁球+微旋转得到圆润三角感，比硬锥更可爱
+const nose = sphere(0.13, M.nose, 16);
+nose.scale.set(1.0, 0.72, 0.62);
+nose.rotation.z = Math.PI; nose.position.set(0, -0.27, 1.09); headGroup.add(nose);
 
-const mouthMat = new THREE.LineBasicMaterial({ color:0x8a5a52 });
-function mouthCurve(sign) {
-  const pts = [];
-  for (let i=0;i<=10;i++){
-    const t=i/10;
-    pts.push(new THREE.Vector3(sign*(0.02+t*0.2), -0.19 - Math.sin(t*Math.PI)*0.09, 1.0));
-  }
-  return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mouthMat);
+// 柔和猫嘴：两段上扬弧线组成的 ω 形，贴合口鼻垫
+const mouthMat = new THREE.LineBasicMaterial({ color:0x8a625c, transparent:true, opacity:0.85 });
+for (const s of [-1,1]) {
+  const pts=[];
+  for (let i=0;i<=10;i++){ const t=i/10; pts.push(new THREE.Vector3(s*(0.015+t*0.17), -0.31 - Math.sin(t*Math.PI)*0.075, 1.135)); }
+  headGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mouthMat));
 }
-headGroup.add(mouthCurve(-1), mouthCurve(1));
 
-const whiskerMat = new THREE.LineBasicMaterial({ color:0x8b7a70, transparent:true, opacity:0.7 });
+// 白色弯胡须：每侧三根，带自然下垂弧度的曲线，不再是一根硬直线
+const whiskerMat = new THREE.LineBasicMaterial({ color:0xfaf3ec, transparent:true, opacity:0.85 });
 for (const s of [-1,1]) for (let i=0;i<3;i++){
-  const pts=[
-    new THREE.Vector3(s*0.24,-0.12+i*0.07,0.96),
-    new THREE.Vector3(s*0.85,-0.06+i*0.14,0.72),
-  ];
+  const y0 = -0.2 + i*0.12;
+  const pts=[];
+  for (let k=0;k<=8;k++){
+    const t=k/8;
+    pts.push(new THREE.Vector3(s*(0.3+t*0.72), y0 + t*0.16 - t*t*0.2, 0.98 - t*0.26));
+  }
   headGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), whiskerMat));
 }
 
-// 享受表情：闭眼弯月 + 小舌头，只在摸头时显示
+// 享受表情：闭眼弧线由眼睛系统统一显示，这里只放小舌头
 const happyFace = new THREE.Group();
 headGroup.add(happyFace);
-for (const s of [-1, 1]) {
-  const arc = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.035, 8, 20, Math.PI), M.face);
-  arc.position.set(s * 0.4, 0.13, 1.02);
-  happyFace.add(arc);
-}
 const tongue = sphere(0.075, M.nose, 16);
 tongue.scale.set(1.1, 0.7, 0.5);
-tongue.position.set(0, -0.3, 1.03);
+tongue.position.set(0, -0.42, 1.06);
 happyFace.add(tongue);
 happyFace.visible = false;
 
@@ -201,14 +265,16 @@ happyFace.visible = false;
 const paws = [];
 function makePaw(sign) {
   const g = new THREE.Group();
-  g.position.set(sign*0.62, -0.62, 0.82);
+  g.position.set(sign*0.56, -0.74, 0.8);
   const pad = sphere(0.3, M.fur);
-  pad.scale.set(1, 0.7, 1.15);
+  pad.scale.set(0.95, 0.7, 1.1);
   g.add(pad);
-  for (let i=0;i<3;i++){
-    const toe = sphere(0.09, M.ear);
-    toe.position.set((i-1)*0.13, 0.12, 0.26);
-    g.add(toe);
+  // 白色小爪尖（白袜爪）+ 两颗小趾，肉感更足
+  const toe = sphere(0.2, M.belly);
+  toe.scale.set(1.05, 0.62, 0.6); toe.position.set(0, -0.06, 0.24); g.add(toe);
+  for (const d of [-1,1]) {
+    const digit = sphere(0.085, M.belly, 12);
+    digit.position.set(d*0.13, -0.02, 0.3); digit.scale.set(1, 0.8, 0.9); g.add(digit);
   }
   cat.add(g);
   paws.push({ group:g, sign, baseX:g.position.x, baseY:g.position.y, baseZ:g.position.z });
@@ -226,169 +292,223 @@ function clearGroup(group) {
   }
 }
 
+// 圆润耳片：用扁球裁出柔和三角轮廓，再叠一层粉色内耳，避免生硬的三棱锥
+function earLeaf(r, material, sx, sy, sz) {
+  const m = sphere(r, material, 20);
+  m.scale.set(sx, sy, sz);
+  return m;
+}
 function buildEars(style) {
   clearGroup(earHolder);
   for (const s of [-1, 1]) {
     const g = new THREE.Group();
     if (style === "round") {
-      const outer = sphere(0.36, M.fur, 20);
-      outer.scale.set(1, 0.9, 0.5); outer.position.set(s*0.66, 0.76, 0); g.add(outer);
-      const inner = sphere(0.21, M.ear, 16);
-      inner.scale.set(1, 0.85, 0.4); inner.position.set(s*0.66, 0.74, 0.17); g.add(inner);
+      // 圆耳：半圆小耳，最柔和
+      const outer = earLeaf(0.4, M.fur, 1.0, 0.9, 0.5); outer.position.set(s*0.7, 0.8, -0.04); g.add(outer);
+      const inner = earLeaf(0.24, M.ear, 1.0, 0.85, 0.3); inner.position.set(s*0.7, 0.78, 0.18); g.add(inner);
     } else if (style === "fold") {
-      const outer = cone(0.36, 0.52, M.fur, 4);
-      outer.rotation.z = s*0.7; outer.rotation.y = Math.PI/4; outer.position.set(s*0.62, 0.72, 0.02); g.add(outer);
-      const inner = cone(0.19, 0.3, M.ear, 4);
-      inner.rotation.z = s*0.7; inner.rotation.y = Math.PI/4; inner.position.set(s*0.62, 0.69, 0.15); g.add(inner);
+      // 折耳：耳尖向前下方折下，贴在头顶
+      const outer = earLeaf(0.42, M.fur, 1.05, 0.52, 0.42);
+      outer.rotation.z = -s*0.5; outer.position.set(s*0.66, 0.82, -0.02); g.add(outer);
+      const inner = earLeaf(0.26, M.ear, 1.0, 0.5, 0.28);
+      inner.rotation.z = -s*0.5; inner.position.set(s*0.66, 0.76, 0.18); g.add(inner);
+      const foldTip = earLeaf(0.16, M.fur, 1.0, 0.7, 0.4);
+      foldTip.rotation.z = s*0.35; foldTip.position.set(s*0.86, 0.6, 0.12); g.add(foldTip);
     } else if (style === "tufted") {
-      const outer = cone(0.42, 0.78, M.fur, 4);
-      outer.rotation.z = s*0.22; outer.rotation.y = Math.PI/4; outer.position.set(s*0.66, 0.92, -0.02); g.add(outer);
-      const inner = cone(0.24, 0.5, M.ear, 4);
-      inner.rotation.z = s*0.22; inner.rotation.y = Math.PI/4; inner.position.set(s*0.66, 0.88, 0.14); g.add(inner);
+      // 簇耳：高而圆润的耳 + 顶部两撮小绒
+      const outer = earLeaf(0.44, M.fur, 0.95, 1.25, 0.42);
+      outer.rotation.z = -s*0.1; outer.position.set(s*0.68, 1.0, -0.04); g.add(outer);
+      const inner = earLeaf(0.26, M.ear, 0.95, 1.15, 0.26);
+      inner.rotation.z = -s*0.1; inner.position.set(s*0.68, 0.98, 0.18); g.add(inner);
       for (let i=0;i<2;i++) {
-        const tuft = cone(0.06, 0.3, M.shade, 4);
-        tuft.position.set(s*(0.5+i*0.16), 1.24, 0.02); tuft.rotation.z = s*0.3; g.add(tuft);
+        const tuft = earLeaf(0.1, M.fur, 0.8, 1.6, 0.5);
+        tuft.position.set(s*(0.56+i*0.16), 1.42, 0.02); tuft.rotation.z = s*0.26; g.add(tuft);
       }
     } else {
-      const outer = cone(0.42, 0.78, M.fur, 4);
-      outer.rotation.z = s*0.22; outer.rotation.y = Math.PI/4; outer.position.set(s*0.66, 0.92, -0.02); g.add(outer);
-      const inner = cone(0.24, 0.5, M.ear, 4);
-      inner.rotation.z = s*0.22; inner.rotation.y = Math.PI/4; inner.position.set(s*0.66, 0.88, 0.14); g.add(inner);
+      // 尖耳（默认）：圆耳根 + 明确三角尖端，兼顾可爱与“猫耳”辨识度
+      const outer = cone(0.5, 1.12, M.fur, 4);
+      outer.rotation.set(0, Math.PI/4, -s*0.12);
+      outer.scale.z = 0.42; outer.position.set(s*0.7, 1.02, -0.04); g.add(outer);
+      const base = earLeaf(0.36, M.fur, 1.0, 0.62, 0.4);
+      base.position.set(s*0.7, 0.76, -0.03); g.add(base);
+      const inner = cone(0.29, 0.72, M.ear, 4);
+      inner.rotation.set(0, Math.PI/4, -s*0.12);
+      inner.scale.z = 0.35; inner.position.set(s*0.7, 0.96, 0.15); g.add(inner);
     }
     earHolder.add(g);
   }
 }
 
+// 眼睛：造型样式只决定“默认是否闭眼”，实际开合由动画状态统一控制。
+// 之前眯眼只是把眼球压扁，animation 里 scale.y 又被重置为 1，所以看起来仍睁眼。
+let eyeStyleClosed = false;
 function buildEyes(style) {
   clearGroup(eyeHolder);
   eyes = [];
+  eyeStyleClosed = style === "sleepy"; // 只剩 圆眼/眯眼/异瞳
   for (const s of [-1, 1]) {
     const g = new THREE.Group();
-    g.position.set(s*0.4, 0.12, 0.86);
-    const w = style === "wide" ? 0.31 : style === "sleepy" ? 0.3 : 0.27;
-    const h = style === "wide" ? 0.33 : style === "sleepy" ? 0.14 : 0.28;
-    const white = sphere(w, M.white, 24);
-    white.scale.set(1, h/w, 0.55); g.add(white);
+    g.position.set(s*0.45, 0.16, 0.9);
+    // 首版经典眼睛：白色眼白 + 随毛色的彩色虹膜 + 深色竖瞳 + 白色高光
+    const white = sphere(0.3, M.white, 24);
+    white.scale.set(1, 1.12, 0.42); g.add(white);
     const irisMat = style === "hetero" && s > 0 ? M.eye2 : M.eye;
-    const iris = sphere(0.17, irisMat, 20);
+    const iris = sphere(0.19, irisMat, 20);
     iris.scale.set(1, 1, 0.5); iris.position.z = 0.12; g.add(iris);
     const pupil = sphere(0.09, M.black, 16);
     pupil.scale.set(0.8, 1.15, 0.4); pupil.position.z = 0.19; g.add(pupil);
-    const spark = sphere(0.05, M.white, 12);
-    spark.position.set(-0.06, 0.07, 0.23); g.add(spark);
-    if (style === "sleepy") {
-      const lid = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.04, 8, 20, Math.PI), M.line);
-      lid.position.set(0, 0.02, 0.14); g.add(lid);
-    }
+    const spark = sphere(0.055, M.white, 12);
+    spark.position.set(-0.07, 0.08, 0.23); g.add(spark);
+
+    // 闭眼弧线：沿用首版描边色，闭眼时显示（保留弯月机制，避免眯眼失效）
+    const arc = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.042, 8, 22, Math.PI), M.line);
+    arc.position.set(s*0.45, 0.14, 0.98);
+    arc.visible = false;
+    eyeHolder.add(arc);
+
     eyeHolder.add(g);
-    eyes.push({ group:g, iris, pupil, spark, sign:s });
+    eyes.push({ group:g, closedArc:arc, iris, pupil, spark, sign:s });
   }
 }
 
 function buildTail(style) {
   clearGroup(tailHolder);
   tailGroup = new THREE.Group();
-  tailGroup.position.set(0.85, -0.35, -0.35);
+  // 尾巴从身体右后方贴地伸出，参考图是「躺/坐时粗尾绕在身侧、尾尖轻轻上翘」
+  tailGroup.position.set(0.7, -0.96, -0.18);
   tailHolder.add(tailGroup);
-  let pts = [], radius = 0.17;
+  const V = (x,y,z) => new THREE.Vector3(x,y,z);
+  let pts, r0, r1;
   if (style === "short") {
-    pts = [new THREE.Vector3(0.1,0,0), new THREE.Vector3(0.45,0.32,-0.05), new THREE.Vector3(0.62,0.5,-0.08)];
-  } else if (style === "fluffy") {
-    radius = 0.25;
-    for (let i=0;i<=8;i++) { const t=i/8; pts.push(new THREE.Vector3(0.28+t*0.85, Math.sin(t*Math.PI)*1.05, -t*0.28)); }
+    pts = [V(0,0,0), V(0.32,0.02,-0.04), V(0.58,0.16,0.02)];
+    r0 = 0.26; r1 = 0.2;
   } else if (style === "curled") {
-    for (let i=0;i<=12;i++) {
-      const t=i/12, a=t*Math.PI*1.9;
-      pts.push(new THREE.Vector3(0.3+Math.cos(a)*0.42, 0.55+Math.sin(a)*0.42, -t*0.15));
-    }
+    pts = [V(0,0,0), V(0.4,0.02,-0.08), V(0.78,0.12,-0.04),
+           V(0.92,0.42,0.06), V(0.7,0.6,0.12), V(0.46,0.52,0.16)];
+    r0 = 0.25; r1 = 0.11;
+  } else if (style === "fluffy") {
+    pts = [V(0,0,0), V(0.34,0.0,-0.1), V(0.68,0.08,-0.1),
+           V(0.98,0.24,-0.02), V(1.08,0.5,0.08), V(0.88,0.66,0.14)];
+    r0 = 0.34; r1 = 0.24;
   } else {
-    for (let i=0;i<=8;i++) { const t=i/8; pts.push(new THREE.Vector3(0.3+t*0.9, Math.sin(t*Math.PI)*0.9, -t*0.3)); }
+    // 默认“弯尾”：贴着地面绕到身侧，尾尖圆润上翘，整体呈横卧的 C 形
+    pts = [V(0,0,0), V(0.36,0.0,-0.06), V(0.72,0.1,-0.04),
+           V(1.0,0.3,0.04), V(1.02,0.56,0.12), V(0.82,0.68,0.16)];
+    r0 = 0.3; r1 = 0.22;
   }
-  tailMesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 40, radius, 12, false), M.fur);
+  const curve = new THREE.CatmullRomCurve3(pts);
+  tailMesh = new THREE.Mesh(taperedTube(curve, 48, 12, r0, r1), M.fur);
   tailGroup.add(tailMesh);
-  if (style === "fluffy") {
-    const tip = sphere(0.3, M.fur, 16);
-    tip.position.copy(pts[pts.length-1]); tailGroup.add(tip);
-  }
+  const tip = sphere(r1, M.fur, 16);
+  tip.position.copy(pts[pts.length-1]); tailGroup.add(tip);
+}
+
+// 花纹贴片：先用一段圆弧算出身体/头部曲面上某经纬度对应的点，
+// 再把薄片贴到该点并让法线朝外，避免方块/球体浮在表面或穿模。
+function curvedPatch(holder, R, squash, lat, lon, w, h, material) {
+  // lat: 竖直方向弧度（0=赤道，正=上）；lon: 水平绕行弧度（0=正前方）
+  const x = Math.sin(lon) * Math.cos(lat) * R;
+  const y = Math.sin(lat) * R;
+  const z = Math.cos(lon) * Math.cos(lat) * R * squash;
+  const patch = sphere(1, material, 16);
+  patch.scale.set(w, h, 0.045);
+  patch.position.set(x, y, z);
+  // 让薄片正面朝向曲面外法线
+  patch.lookAt(new THREE.Vector3(x*2, y*2, z*2));
+  holder.add(patch);
+  return patch;
 }
 
 function buildPattern(pattern) {
   clearGroup(patternBodyHolder);
   clearGroup(patternHeadHolder);
+  // 身体是 LatheGeometry：中段半径约 1.06，z 压扁 0.82；头半径 1.16，z 压 0.92
+  const bodyR = 1.04, bodyZ = 0.82, headR = 1.16, headZ = 0.92;
   if (pattern === "tabby") {
-    for (let i=0;i<4;i++) {
-      const st = roundedBox(0.12, 0.42, 0.08, 0.05, M.shade);
-      st.position.set(-0.6+i*0.4, 0.52+0.05*Math.sin(i), 0.78);
-      st.rotation.z = (i-1.5)*0.18; patternBodyHolder.add(st);
+    // 身体两侧竖纹：沿曲面错落排布，不再用方块
+    for (let i=0;i<5;i++) {
+      const lon = (i-2)*0.24;
+      curvedPatch(patternBodyHolder, bodyR, bodyZ, 0.18 + (i%2)*0.12, lon, 0.085, 0.26, M.shade);
     }
-    for (let i=0;i<3;i++) {
-      const st = roundedBox(0.09, 0.22, 0.06, 0.03, M.shade);
-      st.position.set((i-1)*0.26, 0.79, 0.62); patternHeadHolder.add(st);
+    // 额头三条短纹：都不遮挡眼睛
+    for (let i=-1;i<=1;i++) {
+      curvedPatch(patternHeadHolder, headR, headZ, 0.72, i*0.2, 0.07, 0.2, M.shade);
     }
   } else if (pattern === "tuxedo") {
-    const muzzle = sphere(0.36, M.belly, 20);
-    muzzle.scale.set(1.25, 0.75, 0.5); muzzle.position.set(0, -0.36, 0.93); patternHeadHolder.add(muzzle);
-    const chest = sphere(0.62, M.belly, 20);
-    chest.scale.set(0.72, 0.95, 0.4); chest.position.set(0, -0.35, 0.72); patternBodyHolder.add(chest);
+    // 奶牛：脸颊下侧与胸口的白色块，贴曲面且不与默认白口鼻/白肚子冲突
+    for (const s of [-1,1]) {
+      curvedPatch(patternHeadHolder, headR, headZ, -0.1, s*0.78, 0.3, 0.34, M.belly);
+    }
+    curvedPatch(patternBodyHolder, bodyR, bodyZ, 0.42, 0, 0.34, 0.42, M.belly);
   } else if (pattern === "calico" || pattern === "patches") {
     const seed = Number(CFG.look?.patternSeed) || 7;
     const rnd = n => { const x = Math.sin(seed*127.1 + n*311.7) * 43758.5453; return x - Math.floor(x); };
-    for (let i=0;i<4;i++) {
-      const p = sphere(0.26 + rnd(i)*0.12, i%2 ? M.patch2 : M.patch1, 16);
-      p.scale.set(1, 0.7, 0.25);
-      const ang = rnd(i+10)*Math.PI*2;
-      p.position.set(Math.cos(ang)*0.5, -0.1 + rnd(i+20)*0.75, 0.78);
-      p.rotation.z = rnd(i+30)*Math.PI; patternBodyHolder.add(p);
+    // 身体色斑：限制在脖子以下、肚子两侧的背/侧区域，避免糊在白肚子上
+    for (let i=0;i<5;i++) {
+      const lon = (rnd(i)-0.5)*1.7;
+      const lat = 0.1 + rnd(i+10)*0.55;
+      curvedPatch(patternBodyHolder, bodyR, bodyZ, lat, lon,
+        0.18+rnd(i+20)*0.1, 0.16+rnd(i+30)*0.1, i%2 ? M.patch2 : M.patch1);
     }
+    // 头顶色斑：只在额头较高处，避开双眼
     for (let i=0;i<2;i++) {
-      const p = sphere(0.22 + rnd(i+40)*0.1, i%2 ? M.patch2 : M.patch1, 16);
-      p.scale.set(1, 0.8, 0.3);
-      p.position.set((i?1:-1)*(0.5+rnd(i+50)*0.2), 0.55+rnd(i+60)*0.3, 0.72);
-      patternHeadHolder.add(p);
+      curvedPatch(patternHeadHolder, headR, headZ, 0.62+rnd(i+40)*0.18,
+        (i?1:-1)*(0.22+rnd(i+50)*0.2), 0.16, 0.14, i%2 ? M.patch2 : M.patch1);
     }
   }
 }
 
+// 配饰统一挂在头部节点、用头局部坐标定位。当前头半径 1.16、头心 y=1.8，
+// 脸颊与口鼻把下半张脸整个包住，所以颈部配饰必须放到 z 更靠前的位置才露得出来。
 function buildAccessory(kind) {
   clearGroup(accHeadHolder);
   clearGroup(accBodyHolder);
   if (kind === "bowtie") {
+    // 领结：下巴正下方、口鼻前缘，不能被白下巴挡住
     for (const s of [-1, 1]) {
-      const wing = cone(0.24, 0.42, M.acc, 3);
-      wing.rotation.z = s*Math.PI/2; wing.position.set(s*0.26, 1.12, 0.82); accBodyHolder.add(wing);
+      const wing = cone(0.22, 0.4, M.acc, 3);
+      wing.rotation.z = s*Math.PI/2; wing.position.set(s*0.26, -0.76, 0.95); accHeadHolder.add(wing);
     }
-    const knot = sphere(0.12, M.acc, 12); knot.position.set(0, 1.12, 0.9); accBodyHolder.add(knot);
+    const knot = sphere(0.12, M.acc, 12); knot.position.set(0, -0.76, 1.03); accHeadHolder.add(knot);
   } else if (kind === "scarf") {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.16, 10, 28), M.acc);
-    ring.rotation.x = Math.PI/2; ring.position.set(0, 1.12, 0.05); accBodyHolder.add(ring);
-    const tail1 = roundedBox(0.28, 0.7, 0.14, 0.06, M.acc);
-    tail1.position.set(0.48, 0.75, 0.78); tail1.rotation.z = -0.16; accBodyHolder.add(tail1);
-    const tail2 = roundedBox(0.26, 0.55, 0.14, 0.06, M.acc);
-    tail2.position.set(0.7, 0.82, 0.7); tail2.rotation.z = -0.3; accBodyHolder.add(tail2);
+    // 围巾：环套在脖子（头下方），半径大于该高度头截面；尾巴垂在胸前
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.15, 10, 28), M.acc);
+    ring.rotation.x = Math.PI/2; ring.position.set(0, -0.82, 0.12); accHeadHolder.add(ring);
+    const tail1 = roundedBox(0.26, 0.62, 0.13, 0.06, M.acc);
+    tail1.position.set(0.5, -1.15, 0.82); tail1.rotation.z = -0.12; accHeadHolder.add(tail1);
+    const tail2 = roundedBox(0.24, 0.5, 0.13, 0.06, M.acc);
+    tail2.position.set(0.68, -1.08, 0.74); tail2.rotation.z = -0.26; accHeadHolder.add(tail2);
   } else if (kind === "hat") {
-    // 头顶约 y=0.96（头半径1.02 × y缩放0.94），帽檐下移到贴住头顶，帽冠压在帽檐上
-    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.74, 0.78, 0.08, 28), M.acc);
-    brim.position.set(0, 0.92, 0.04); brim.rotation.x = -0.06; accHeadHolder.add(brim);
-    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.56, 0.56, 24), M.acc);
-    crown.position.set(0, 1.21, 0.02); accHeadHolder.add(crown);
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.52, 0.1, 24), M.belly);
-    band.position.set(0, 1.0, 0.03); accHeadHolder.add(band);
+    // 帽子：帽檐坐在头顶（局部 y≈1.06），整体后移避开眼睛与耳朵根部
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.74, 0.09, 28), M.acc);
+    brim.position.set(0, 1.1, -0.12); brim.rotation.x = -0.1; accHeadHolder.add(brim);
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.54, 0.56, 24), M.acc);
+    crown.position.set(0, 1.38, -0.12); accHeadHolder.add(crown);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.5, 0.1, 24), M.belly);
+    band.position.set(0, 1.18, -0.12); accHeadHolder.add(band);
   } else if (kind === "collar") {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.09, 8, 28), M.acc);
-    ring.rotation.x = Math.PI/2; ring.position.set(0, 1.12, 0.08); accBodyHolder.add(ring);
-    const bell = sphere(0.15, M.bell, 12); bell.position.set(0, 0.98, 0.78); accBodyHolder.add(bell);
+    // 项圈：套在头下方颈部，半径 0.86 大于该高度头截面；铃铛前置到口鼻下方
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.075, 10, 36), M.acc);
+    ring.rotation.x = Math.PI/2; ring.position.set(0, -0.82, 0.12); accHeadHolder.add(ring);
+    const tab = roundedBox(0.18, 0.1, 0.12, 0.03, M.acc);
+    tab.position.set(0, -0.88, 0.92); accHeadHolder.add(tab);
+    const bell = sphere(0.15, M.bell, 16);
+    bell.position.set(0, -0.93, 1.0); accHeadHolder.add(bell);
   }
 }
 
 function applyBody() {
   const b = CFG.look?.body || "normal";
   const s = b === "slim" ? 0.82 : b === "chubby" ? 1.16 : 1;
-  body.scale.set(s, 0.92*(b === "chubby" ? 1.04 : 1), 0.86*s);
-  belly.scale.set(0.95*s, 0.86, 0.55);
+  body.scale.set(s, 0.96*(b === "chubby" ? 1.05 : 1), s);
+  // 白肚与身体等比缩放：z 半径/位置随 s 联动，避免 chubby 时边缘曲率失配戳出尖角
+  const by = b === "chubby" ? 1.05 : 1;
+  belly.scale.set(0.86*s, 0.92*by, 0.3*s);
+  belly.position.z = 0.74*s;
   headGroup.scale.setScalar(CFG.look?.headScale || 1);
   paws.forEach(p => {
-    p.group.position.x = p.sign*0.62*s;
-    p.group.position.y = -0.62 + (b === "chubby" ? 0.06 : 0);
+    p.group.position.x = p.sign*0.58*s;
+    p.group.position.y = -0.72 + (b === "chubby" ? 0.06 : 0);
     p.baseX = p.group.position.x;
     p.baseY = p.group.position.y;
     p.baseZ = p.group.position.z;
@@ -399,7 +519,7 @@ function normalizeLook(input) {
   const out = {};
   const options = {
     ear: ["pointy","round","fold","tufted"],
-    eye: ["round","wide","sleepy","hetero"],
+    eye: ["round","sleepy","hetero"],
     tail: ["curved","short","fluffy","curled"],
     body: ["slim","normal","chubby"],
     accessory: ["none","bowtie","scarf","hat","collar"],
@@ -585,7 +705,7 @@ function applyCoat() {
   M.eye2.color.setHex(c.eye2 ?? 0x4FA9D6);
   M.patch1.color.setHex(c.patches?.[0] ?? 0xE69A3C);
   M.patch2.color.setHex(c.patches?.[1] ?? 0x3A3740);
-  nose.visible = true;
+  nose.visible = true; // 参考图：粉色小鼻
   buildPattern(CFG.look?.pattern || "none");
   [...document.querySelectorAll(".coat")].forEach(el=>{
     el.classList.toggle("sel", el.dataset.coat === CFG.coat);
@@ -629,7 +749,16 @@ function renderCoats() {
   for (const [id, c] of entries) {
     const d = document.createElement("div");
     d.className = "coat"; d.dataset.coat = id; d.title = c.name;
-    d.innerHTML = `<i style="background:${hex(c.fur)}"></i><b style="background:${hex(c.eye)}"></b>`;
+    // Tauri 注入的 CSP nonce 会让 WebView2 忽略运行时内联 style 属性，
+    // 因此色块改用 canvas 绘制（DOM API 不受 style-src-attr 限制）。
+    const cv = document.createElement("canvas");
+    cv.width = 96; cv.height = 64;
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = hex(c.fur); ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.beginPath(); ctx.arc(48, 32, 9, 0, Math.PI*2);
+    ctx.fillStyle = hex(c.eye); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,255,255,.75)"; ctx.stroke();
+    d.appendChild(cv);
     d.onclick = () => { CFG.coat = id; saveCfg(); applyCoat(); };
     host.appendChild(d);
   }
@@ -740,16 +869,43 @@ function analyzeImageToCat(img, name) {
 }
 window.__pawpalAnalyzeImage = analyzeImageToCat;
 
+const IMAGE_INFO_DEFAULT = "选择一张 PNG/JPEG，或把图片拖到桌宠上。只在本机取色分析。";
+let uploadedImageUrl = null;
+
+// 移除已上传图片：撤销预览 URL、清空文件框，并把毛色+造型恢复为默认小猫。
+function clearUploadedImage(silent = false) {
+  if (uploadedImageUrl) { URL.revokeObjectURL(uploadedImageUrl); uploadedImageUrl = null; }
+  const input = document.getElementById("cat-image");
+  if (input) input.value = "";
+  const preview = document.getElementById("cat-preview");
+  if (preview) { preview.removeAttribute("src"); preview.classList.remove("show"); }
+  const clearBtn = document.getElementById("btn-image-clear");
+  if (clearBtn) clearBtn.disabled = true;
+  const info = document.getElementById("image-info");
+  if (info) info.textContent = IMAGE_INFO_DEFAULT;
+  delete CFG.customCoat;
+  CFG.coat = DEFAULT.coat;
+  saveCfg();
+  renderCoats();
+  applyCoat();
+  applyLook(DEFAULT_LOOK, true);
+  if (!silent) showToast("已移除图片，小猫恢复默认");
+}
+
 function handleImageFile(file) {
   if (!file || !file.type.startsWith("image/")) { showToast("请选择 PNG 或 JPEG 图片"); return; }
   const info = document.getElementById("image-info");
   if (info) info.textContent = "正在分析图片…";
+  if (uploadedImageUrl) URL.revokeObjectURL(uploadedImageUrl);
   const url = URL.createObjectURL(file);
+  uploadedImageUrl = url;
   const img = new Image();
   img.onload = () => {
     try {
       const preview = document.getElementById("cat-preview");
-      if (preview) { preview.src = url; preview.style.display = "block"; }
+      if (preview) { preview.src = url; preview.classList.add("show"); }
+      const clearBtn = document.getElementById("btn-image-clear");
+      if (clearBtn) clearBtn.disabled = false;
       const result = analyzeImageToCat(img, file.name.replace(/\.[^.]+$/, "") + " 同款");
       applyRemoteCoat(result.palette);
       applyLook(result.look);
@@ -765,10 +921,21 @@ function handleImageFile(file) {
     } catch (e) {
       if (info) info.textContent = "生成失败：" + e.message;
       showToast("图片分析失败");
+      clearUploadedImage(true);
     }
   };
-  img.onerror = () => { if (info) info.textContent = "图片读取失败"; URL.revokeObjectURL(url); };
+  img.onerror = () => { if (info) info.textContent = "图片读取失败"; clearUploadedImage(true); };
   img.src = url;
+}
+
+// 启动时/外部配置同步后：旧配置里若带照片配色，仍提供“移除图片”入口
+function syncImageUIState() {
+  const clearBtn = document.getElementById("btn-image-clear");
+  if (clearBtn) clearBtn.disabled = !CFG.customCoat;
+  const info = document.getElementById("image-info");
+  if (!info) return;
+  if (CFG.customCoat) info.textContent = `当前使用照片配色「${CFG.customCoat.name || "照片定制"}」（原图不保存），点上方按钮可移除并恢复默认`;
+  else info.textContent = IMAGE_INFO_DEFAULT;
 }
 
 // 合规：无端口、无网络。MCP 通过单一配置文件 + 进程内事件热更新。
@@ -856,6 +1023,9 @@ window.__pawpalDebug = () => ({
   headYaw: headGroup.rotation.y,
   bodyLean: cat.rotation.x,
   eyeX: S.eyeX, eyeY: S.eyeY,
+  eyeStyleClosed,
+  eyesVisible: eyes.map(e=>e.group.visible),
+  arcsVisible: eyes.map(e=>e.closedArc.visible),
   typing: S.typing,
   popups: keyPopups.length,
   popupY: keyPopups.length ? keyPopups[0].mesh.position.y : null,
@@ -1028,19 +1198,19 @@ function frame(now){
   headGroup.rotation.x += (pitch - headGroup.rotation.x)*Math.min(1,dt/180);
   headGroup.rotation.z = Math.sin(now/2600)*0.02;
 
-  // 眼睛：摸头时彻底闭眼享受（隐藏眼球，只留弯月弧线）；睡觉/眨眼时压扁闭眼
+  // 眼睛：眯眼造型 / 睡觉 / 眨眼 / 摸头享受时都闭合成弯月弧线（不再压扁眼球）
   const enjoying = S.petting && !S.sleeping;
-  const closed = S.sleeping || S.blink>0 || enjoying;
+  const closed = eyeStyleClosed || S.sleeping || S.blink>0 || enjoying;
   eyes.forEach(e=>{
-    e.group.visible = !enjoying;          // 享受时眼球完全消失，不留缝隙
-    e.group.scale.y = closed ? 0.06 : 1;  // 睡觉/眨眼时闭得更实
+    e.group.visible = !closed;
+    e.closedArc.visible = closed;
     e.iris.position.x = S.eyeX*0.06;
     e.iris.position.y = -S.eyeY*0.04;
     e.pupil.position.x = S.eyeX*0.07;
     e.pupil.position.y = -S.eyeY*0.05;
   });
   happyFace.visible = enjoying;
-  if (enjoying) tongue.position.y = -0.3 + Math.sin(now/220)*0.012;
+  if (enjoying) tongue.position.y = -0.42 + Math.sin(now/220)*0.012;
   blushL.material.opacity = S.petting ? 0.9 : 0.55;
   blushR.material.opacity = blushL.material.opacity;
 
@@ -1108,11 +1278,18 @@ const settings = $("settings"), toolbar = $("toolbar");
 function togglePanel(force){ const open = force===undefined ? !settings.classList.contains("open") : force; settings.classList.toggle("open", open); }
 toolbar.classList.add("show");
 
+// 设置面板双标签：外观 / 键盘与系统
+function switchTab(name){
+  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===name));
+  document.querySelectorAll(".pane").forEach(p=>p.classList.toggle("active", p.id===`pane-${name}`));
+}
+document.querySelectorAll(".tab").forEach(b=>{ b.onclick = ()=>switchTab(b.dataset.tab); });
+
 $("btn-set").onclick = ()=>togglePanel();
 $("btn-close").onclick = ()=>togglePanel(false);
 $("btn-demo").onclick = e=>{
   S.demo=!S.demo; e.target.textContent=S.demo?"停止":"演示";
-  e.target.style.background=S.demo?"#7b6cf6":""; e.target.style.color=S.demo?"#fff":"";
+  e.target.classList.toggle("on", S.demo);
 };
 // 窗口缩放：以 760x560 为 100%，保持窗口中心不变
 const BASE_W = 760, BASE_H = 560;
@@ -1135,6 +1312,7 @@ listen("open-settings", ()=>togglePanel(true)).catch(()=>{});
 
 // 桌面快捷方式（PawPal --appearance）触发：打开面板并定位到外观编辑器
 function openAppearanceEditor(){
+  switchTab("appearance");
   togglePanel(true);
   requestAnimationFrame(()=>{
     const grp = $("appearance-grp");
@@ -1175,6 +1353,8 @@ function setupLookUI() {
   if (acc) acc.oninput = e => applyLook({ accColor: e.target.value }, true);
   const file = $("cat-image");
   if (file) file.onchange = () => { if (file.files?.[0]) handleImageFile(file.files[0]); };
+  const clearBtn = $("btn-image-clear");
+  if (clearBtn) clearBtn.onclick = () => clearUploadedImage();
   const rnd = $("btn-random");
   if (rnd) rnd.onclick = randomLook;
   const reset = $("btn-look-reset");
@@ -1189,7 +1369,7 @@ function randomLook() {
   const pick = a => a[Math.floor(Math.random()*a.length)];
   applyLook({
     ear: pick(["pointy","round","fold","tufted"]),
-    eye: pick(["round","wide","sleepy","hetero"]),
+    eye: pick(["round","sleepy","hetero"]),
     tail: pick(["curved","short","fluffy","curled"]),
     body: pick(["slim","normal","chubby"]),
     pattern: pick(["none","tabby","tuxedo","calico","patches"]),
@@ -1231,7 +1411,16 @@ function syncUI(){
 $("size").oninput=e=>{ CFG.size=Number(e.target.value); saveCfg(); applyWindowSize(); };
 $("rm-min").onchange=e=>{ CFG.rmMin=Math.max(1,Number(e.target.value)||45); saveCfg(); setupReminder(); };
 $("rm-text").onchange=e=>{ CFG.rmText=e.target.value||"该起来活动一下啦"; saveCfg(); };
-$("btn-reset").onclick=()=>{ CFG=Object.assign({},DEFAULT,{ look:CFG.look, coat:CFG.coat, customCoat:CFG.customCoat }); saveCfg(); setupReminder(); syncUI(); applyWindowSize(); };
+$("btn-reset").onclick=()=>{
+  if (uploadedImageUrl) { URL.revokeObjectURL(uploadedImageUrl); uploadedImageUrl = null; }
+  const preview = $("cat-preview"); if (preview) { preview.removeAttribute("src"); preview.classList.remove("show"); }
+  const file = $("cat-image"); if (file) file.value = "";
+  const clearBtn = $("btn-image-clear"); if (clearBtn) clearBtn.disabled = true;
+  const info = $("image-info"); if (info) info.textContent = IMAGE_INFO_DEFAULT;
+  CFG = Object.assign({}, DEFAULT, { look: Object.assign({}, DEFAULT_LOOK) });
+  saveCfg(); setupReminder(); renderCoats(); syncUI(); applyLook(DEFAULT_LOOK, true); applyWindowSize();
+  showToast("已恢复默认设置");
+};
 
 let remindTimer=null;
 function setupReminder(){
@@ -1252,6 +1441,7 @@ function applyLoadedConfig() {
   syncUI();
   applyCoat();
   applyLook(CFG.look, true);
+  syncImageUIState();
   setupReminder();
 }
 
@@ -1272,8 +1462,11 @@ listen("config-changed", async () => {
   }
 }).catch(()=>{});
 
-// 先按默认配置完成场景初始化，再异步读取磁盘配置覆盖
+// 先按默认配置完成场景初始化，但此轮禁止写盘——否则会在 initConfig() 读取前
+// 把用户已有配置覆盖成默认值（表现为重启后造型/毛色丢失）。
+applyingRemote = true;
 applyLoadedConfig();
+applyingRemote = false;
 initConfig().then(() => {
   applyLoadedConfig();
   setupReminder();
