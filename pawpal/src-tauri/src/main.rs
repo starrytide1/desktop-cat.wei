@@ -3,7 +3,9 @@
 //! PawPal — 合规版原生桌宠
 //!
 //! 合规约束（与需求逐条对应）：
-//!  1. 不使用任何全局输入监听 API；键盘/鼠标事件只来自本应用 WebView 窗口内的 DOM 事件。
+//!  1. 键盘跟随：用户已授权放宽「仅监听自身窗口」，使用 rdev（Windows 低级键盘钩子
+//!     WH_KEYBOARD_LL）做全局键盘跟随；只提取左右手与键位标识，不记录输入文本、不联网。
+//!     本窗口聚焦时跳过全局事件，交给窗口内 DOM 事件，避免重复。
 //!  2. 不读剪贴板、不截图录屏、不遍历目录；持久化只写一个文件
 //!     %APPDATA%/PawPal/config.json。
 //!  3. 无网络请求、无埋点 SDK；无监听器端口；跨进程只通过「单一配置文件 + 进程内事件」。
@@ -12,6 +14,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -20,6 +23,76 @@ use tauri::{
 };
 
 static ALWAYS_TOP: AtomicBool = AtomicBool::new(true);
+static GLOBAL_KEYS: AtomicBool = AtomicBool::new(true);
+const LEFT_KEYS: &str = "`12345qwertasdfgzxcvb";
+
+/// 把 rdev 的按键转成 (键位 code, 左右手, 显示标签)；只处理可显示字符键，修饰键忽略。
+fn map_global_key(key: rdev::Key) -> Option<(&'static str, &'static str, &'static str)> {
+    use rdev::Key::*;
+    let (code, label) = match key {
+        KeyA => ("KeyA", "a"), KeyB => ("KeyB", "b"), KeyC => ("KeyC", "c"),
+        KeyD => ("KeyD", "d"), KeyE => ("KeyE", "e"), KeyF => ("KeyF", "f"),
+        KeyG => ("KeyG", "g"), KeyH => ("KeyH", "h"), KeyI => ("KeyI", "i"),
+        KeyJ => ("KeyJ", "j"), KeyK => ("KeyK", "k"), KeyL => ("KeyL", "l"),
+        KeyM => ("KeyM", "m"), KeyN => ("KeyN", "n"), KeyO => ("KeyO", "o"),
+        KeyP => ("KeyP", "p"), KeyQ => ("KeyQ", "q"), KeyR => ("KeyR", "r"),
+        KeyS => ("KeyS", "s"), KeyT => ("KeyT", "t"), KeyU => ("KeyU", "u"),
+        KeyV => ("KeyV", "v"), KeyW => ("KeyW", "w"), KeyX => ("KeyX", "x"),
+        KeyY => ("KeyY", "y"), KeyZ => ("KeyZ", "z"),
+        Num0 => ("Digit0", "0"), Num1 => ("Digit1", "1"), Num2 => ("Digit2", "2"),
+        Num3 => ("Digit3", "3"), Num4 => ("Digit4", "4"), Num5 => ("Digit5", "5"),
+        Num6 => ("Digit6", "6"), Num7 => ("Digit7", "7"), Num8 => ("Digit8", "8"),
+        Num9 => ("Digit9", "9"),
+        BackQuote => ("Backquote", "`"), Minus => ("Minus", "-"), Equal => ("Equal", "="),
+        LeftBracket => ("BracketLeft", "["), RightBracket => ("BracketRight", "]"),
+        BackSlash => ("Backslash", "\\"), SemiColon => ("Semicolon", ";"),
+        Quote => ("Quote", "'"), Comma => ("Comma", ","), Dot => ("Period", "."),
+        Slash => ("Slash", "/"), Space => ("Space", " "),
+        Return => ("Enter", "↵"), Tab => ("Tab", "⇥"), Backspace => ("Backspace", "⌫"),
+        _ => return None,
+    };
+    let side = if LEFT_KEYS.contains(label) { "L" } else { "R" };
+    Some((code, side, label))
+}
+
+/// 全局键盘跟随线程：rdev 回调在独立线程运行，通过进程内事件发给前端。
+fn start_global_keys(app: AppHandle) {
+    std::thread::spawn(move || {
+        let listener_app = Arc::new(app);
+        let _ = rdev::listen(move |event| {
+            if !GLOBAL_KEYS.load(Ordering::SeqCst) {
+                return;
+            }
+            if let rdev::EventType::KeyPress(key) = event.event_type {
+                // 本窗口聚焦时，窗口内 DOM keydown 已处理，跳过避免重复弹字
+                if listener_app
+                    .get_webview_window("main")
+                    .and_then(|w| w.is_focused().ok())
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+                if let Some((code, side, label)) = map_global_key(key) {
+                    let _ = listener_app.emit(
+                        "global-key",
+                        serde_json::json!({ "code": code, "side": side, "label": label }),
+                    );
+                }
+            }
+        });
+    });
+}
+
+#[tauri::command]
+fn set_global_keys(enable: bool) -> bool {
+    GLOBAL_KEYS.store(enable, Ordering::SeqCst);
+    enable
+}
+
+#[tauri::command]
+fn get_global_keys() -> bool {
+    GLOBAL_KEYS.load(Ordering::SeqCst)
+}
 
 /// 唯一的持久化文件：%APPDATA%/PawPal/config.json
 fn config_path() -> Option<PathBuf> {
@@ -236,6 +309,9 @@ fn main() {
             // 配置文件变化 → 进程内事件（供前端热加载 MCP 写入的配色/造型）
             watch_config(handle.clone());
 
+            // 全局键盘跟随 → 进程内事件（用户授权放宽；只传键位标识，不记录文本）
+            start_global_keys(handle.clone());
+
             // 快捷方式带 --appearance：等前端订阅好后，用进程内事件打开编辑器
             if want_appearance {
                 let h = handle.clone();
@@ -256,6 +332,8 @@ fn main() {
             write_config,
             get_config_path,
             set_pet_size,
+            set_global_keys,
+            get_global_keys,
             set_topmost,
             get_topmost,
             hide_cat,

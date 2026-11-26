@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 /* ============ 配置 ============ */
 const DEFAULT = {
   coat: "orange", layout: 65, sleep: 8000, size: 100,
-  purr: true, sleeppurr: true, idle: true, privacy: false, top: true,
+  purr: true, sleeppurr: true, idle: true, privacy: false, top: true, globalKeys: true,
   remind: false, rmMin: 45, rmText: "该起来活动一下啦",
 };
 const DEFAULT_LOOK = {
@@ -366,12 +366,13 @@ function buildAccessory(kind) {
     const tail2 = roundedBox(0.26, 0.55, 0.14, 0.06, M.acc);
     tail2.position.set(0.7, 0.82, 0.7); tail2.rotation.z = -0.3; accBodyHolder.add(tail2);
   } else if (kind === "hat") {
-    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.07, 28), M.acc);
-    brim.position.set(0, 1.11, 0); accHeadHolder.add(brim);
-    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.55, 0.62, 24), M.acc);
-    crown.position.set(0, 1.43, 0); accHeadHolder.add(crown);
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.1, 24), M.belly);
-    band.position.set(0, 1.21, 0); accHeadHolder.add(band);
+    // 头顶约 y=0.96（头半径1.02 × y缩放0.94），帽檐下移到贴住头顶，帽冠压在帽檐上
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.74, 0.78, 0.08, 28), M.acc);
+    brim.position.set(0, 0.92, 0.04); brim.rotation.x = -0.06; accHeadHolder.add(brim);
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.56, 0.56, 24), M.acc);
+    crown.position.set(0, 1.21, 0.02); accHeadHolder.add(crown);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.52, 0.1, 24), M.belly);
+    band.position.set(0, 1.0, 0.03); accHeadHolder.add(band);
   } else if (kind === "collar") {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.09, 8, 28), M.acc);
     ring.rotation.x = Math.PI/2; ring.position.set(0, 1.12, 0.08); accBodyHolder.add(ring);
@@ -518,7 +519,7 @@ function spawnSymbol(idx, label) {
   sprite.scale.setScalar(0.26);
   popupsGroup.add(sprite);
   keyPopups.push({ mesh: sprite, life: 1, baseY: sprite.position.y });
-  while (keyPopups.length > 14) {
+  while (keyPopups.length > 20) {
     const old = keyPopups.shift();
     popupsGroup.remove(old.mesh);
     old.mesh.material.dispose();
@@ -799,7 +800,7 @@ function lightKey(code, side, idx) {
   clearTimeout(k.userData.resetTimer);
   k.userData.resetTimer = setTimeout(()=>{
     if (k.material) { k.material.emissiveIntensity = 0; k.material.color.setHex(0x6b6573); }
-  }, 220);
+  }, 320);
 }
 
 function pressKey(code, side, label) {
@@ -868,15 +869,24 @@ function chirp(){
   o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime+0.26);
 }
 
-/* ============ 输入：仅监听应用自身窗口内的 DOM 事件 ============ */
-// 合规：不使用任何全局钩子（rdev/pynput/SetWindowsHookEx/GetAsyncKeyState 等）。
-// 键盘与鼠标事件只来自本 WebView 窗口，窗口未聚焦时不会收到任何输入。
+/* ============ 输入：窗口内 DOM 事件 + 全局键盘跟随 ============ */
+// 全局跟随由 Rust 端 rdev（WH_KEYBOARD_LL）提供，只传键位标识不记录文本。
+// 窗口聚焦时 Rust 端会跳过全局事件；这里再做一次时间去重，双保险避免重复弹字。
 const isTauri = !!window.__TAURI_INTERNALS__;
+let lastLocalKey = { code:"", t:0 };
 window.addEventListener("keydown", e=>{
   if (e.repeat) return;
   const left = "`12345qwertasdfgzxcvb".includes(e.key.toLowerCase());
+  lastLocalKey = { code:e.code, t:performance.now() };
   pressKey(e.code, left?"L":"R", e.key);
 });
+listen("global-key", ({ payload })=>{
+  if (!CFG.globalKeys) return;
+  const { code, side, label } = payload || {};
+  // 120ms 内窗口内已处理过同一键 → 跳过
+  if (code && code === lastLocalKey.code && performance.now() - lastLocalKey.t < 120) return;
+  pressKey(code, side, label);
+}).catch(()=>{});
 window.addEventListener("mousemove", e=>{ S.mouseX=e.clientX; S.mouseY=e.clientY; S.lastAct=performance.now(); wake(); });
 window.addEventListener("wheel", e=>{
   // Ctrl/⌘ + 滚轮：缩放宠物窗口；普通滚轮仍是唤醒猫
@@ -922,11 +932,11 @@ function frame(now){
   });
   // 弹出的字符向上飘并淡出
   keyPopups.forEach(p=>{
-    p.life -= dt/720;
+    p.life -= dt/1100; // 延长到 1.1 秒，弹字更持久不易“消失”
     const t = 1 - Math.max(0, p.life);
     p.mesh.position.y = p.baseY + t*0.5;
     p.mesh.scale.setScalar(0.26 + Math.min(1, t*5)*0.12);
-    p.mesh.material.opacity = Math.max(0, Math.min(1, p.life*1.8));
+    p.mesh.material.opacity = Math.max(0, Math.min(1, p.life*2.2));
   });
   for (let i=keyPopups.length-1;i>=0;i--){
     if (keyPopups[i].life <= 0){
@@ -967,11 +977,12 @@ function frame(now){
   headGroup.rotation.x += (-S.eyeY*0.12 - headGroup.rotation.x)*Math.min(1,dt/180);
   headGroup.rotation.z = Math.sin(now/2600)*0.02;
 
-  // 眼睛：摸头时闭眼享受（弯月眼 + 小舌头），睡觉/眨眼时也会闭眼
+  // 眼睛：摸头时彻底闭眼享受（隐藏眼球，只留弯月弧线）；睡觉/眨眼时压扁闭眼
   const enjoying = S.petting && !S.sleeping;
   const closed = S.sleeping || S.blink>0 || enjoying;
   eyes.forEach(e=>{
-    e.group.scale.y = closed ? 0.08 : 1;
+    e.group.visible = !enjoying;          // 享受时眼球完全消失，不留缝隙
+    e.group.scale.y = closed ? 0.06 : 1;  // 睡觉/眨眼时闭得更实
     e.iris.position.x = S.eyeX*0.06;
     e.iris.position.y = -S.eyeY*0.04;
     e.pupil.position.x = S.eyeX*0.07;
@@ -1158,6 +1169,7 @@ function syncUI(){
   sw("sw-sleeppurr","sleeppurr");
   sw("sw-idle","idle");
   sw("sw-privacy","privacy");
+  sw("sw-globalkeys","globalKeys",v=>invoke("set_global_keys",{enable:v}).catch(()=>{}));
   sw("sw-top","top",v=>invoke("set_topmost",{enable:v}).catch(()=>{}));
   sw("sw-remind","remind",setupReminder);
   $("size").value=CFG.size;
@@ -1214,5 +1226,6 @@ applyLoadedConfig();
 initConfig().then(() => {
   applyLoadedConfig();
   setupReminder();
+  invoke("set_global_keys",{enable:!!CFG.globalKeys}).catch(()=>{});
   if (CFG.top) invoke("set_topmost",{enable:true}).catch(()=>{});
 });
