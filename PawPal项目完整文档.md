@@ -2,7 +2,7 @@
 
 > 一份从「GitHub 爆火打字小猫」调研开始，到零基础搭建工具链、开发原生桌宠、接入 MCP、扩展外观编辑器、制作桌面快捷方式、安全审计加固，再到**合规化改造**的全流程记录。
 >
-> 文档日期：2026-11-26　｜　项目版本：0.1.0　｜　最终交付：`deliverables/PawPal.exe`（9.1 MB）
+> 文档日期：2026-11-26　｜　项目版本：0.1.0　｜　最终交付：`deliverables/PawPal.exe`（9.2 MB）
 >
 > ⚠️ **当前为合规版**：最终交付已按五条安全约束重构——无全局输入监听、无网络、无端口、无剪贴板/截图/目录遍历、持久化仅 `%APPDATA%/PawPal/config.json` 单文件、无管理员权限与自动更新。本文第七、九章中描述的全局钩子/HTTP 端口/localStorage 属于**改造前的历史实现**，当前状态以新增的「十三、合规化改造」章节为准。
 
@@ -84,7 +84,7 @@
 透明置顶窗口 + 点击穿透
 ```
 
-**关键洞察**：真正的门槛在「全局钩子 + 原生透明窗口」两块，动画本身并不神秘。隐私设计的核心是**只传左右手提示而非按键内容**——本项目完整继承了这一设计。
+**关键洞察**：真正的门槛在「全局钩子 + 原生透明窗口」两块，动画本身并不神秘。隐私设计的核心是**跨进程只传左右手提示而非按键内容**——本项目完整继承了这一设计。按键符号只在应用自身窗口内即时显示、不外传；开启「隐私模式」后只显示圆点，不显示真实字符（见第 16 章）。
 
 ---
 
@@ -630,7 +630,7 @@ cd pawpal && npm install
 | 外观编辑器 | `ddd75e9a…` | 部件系统、图片生成整猫 |
 | 快捷方式 | `bb47d001…` | `--appearance`、单实例转发 |
 | 安全加固 | `d56a1443…` | CORS/Host 校验、XSS 修复、线程池、CSP、图片预算 |
-| **合规版（最终）** | **`fcd0180b…`** | 移除全局钩子/端口/localStorage，改单配置文件 + 进程内事件，依赖锁版本 |
+| **合规版（最终）** | **`5712c04d…`** | 移除全局钩子/端口/localStorage，改单配置文件 + 进程内事件，依赖锁版本；增加按键弹字与猫爪跟敲动画 |
 
 ### 11.4 已知限制
 
@@ -737,7 +737,7 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 全程：零端口、零网络、零剪贴板、零目录遍历、零提权
 ```
 
-**打字→动画**（改造后）：窗口内 `keydown` → `pressKey()` 抬爪 + 按键高亮；不再有 `rdev`→`normalize_key`→`pawpal-input` 链路。
+**打字→动画**（改造后）：窗口内 `keydown` → `pressKey()` 按键下沉/高亮 → 符号精灵向上飘出 → 猫爪移到该键位敲击；不再有 `rdev`→`normalize_key`→`pawpal-input` 链路。详见第 16 章。
 
 **照片→整猫**（改造后）：用户点选单个图片 → 本机 `analyzeImageToCat()` 取色 → 前端直接应用；或 MCP 工具读单文件 → 写配置文件 → 进程内事件 → 前端应用。两条路径均不遍历目录、不联网。
 
@@ -758,13 +758,13 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 | MCP 无端口通信 | stdio JSON-RPC 握手 + 6 工具调用 | 协议 2025-06-18、6 工具、`set_coat`/`set_appearance` 写入配置成功，工具 schema 无 port 参数 |
 | 单配置文件 | 读取 `%APPDATA%/PawPal/config.json` | `coat=custom`、自定义配色名与 `look`（fold 耳/curled 尾）正确写入 |
 | 窗口内键盘 | CDP 派发窗口内 keydown + 截图 | 0 异常，canvas 正常渲染，猫眼睁开（被键盘唤醒） |
-| 编译 | `cargo build --release` + `npm run build` | 通过，exe 9.1 MB（较 9.4 MB 减少，因移除 rdev） |
+| 编译 | `cargo build --release` + `npm run build` | 通过，exe 9.2 MB（较 9.4 MB 减少，因移除 rdev） |
 
 ### 13.6 变更后的影响
 
 - **功能取舍**：切到其他软件打字时小猫不再反应——这是「仅监听自身窗口」约束的必然结果；外观编辑、图片生成、MCP 热更新、桌面快捷方式均保留。
 - **快捷方式**：`--appearance` 不再做跨进程转发（无需端口），只驱动本进程内的事件。
-- **最终交付**：`deliverables/PawPal.exe`（9.1 MB，SHA-256 `fcd0180b460cb73fc12ef8063f371a0614327a8ba5ead9ce2f081b3ed7fbab4e`），桌面快捷方式保持不变。
+- **最终交付**：`deliverables/PawPal.exe`（9.2 MB，SHA-256 `5712c04d529d50af45b39b6968ff3b4a72a841a2d39d9fe69794b9cca238d8c0`），桌面快捷方式保持不变。
 
 ---
 
@@ -831,16 +831,16 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 
 | 文件:行号 | 事件 | 用途 |
 |---|---|---|
-| `main.js:775` | `window.addEventListener("keydown", ...)` | 窗口内按键 → 抬爪动画与按键高亮 |
-| `main.js:780` | `window.addEventListener("mousemove", ...)` | 窗口内鼠标位置 → 眼睛追踪 |
-| `main.js:781` | `window.addEventListener("wheel", ...)` | 窗口内滚轮 → 唤醒猫 |
-| `main.js:784` | `canvas.addEventListener("mousedown", ...)` | 画布内按下：靠近头部摸猫，否则拖动窗口 |
-| `main.js:793` | `window.addEventListener("mouseup", ...)` | 结束摸猫、停止呼噜 |
-| `main.js:796` | `canvas.addEventListener("contextmenu", ...)` | 画布右键打开设置面板 |
-| `main.js:891` | `window.addEventListener("resize", ...)` | 窗口尺寸变化时调整相机与渲染器 |
-| `main.js:961` | `file.onchange = ...` | 用户在文件选择框中点选单张图片 |
-| `main.js:966` | `canvas.addEventListener("dragover", ...)` | 允许把单张图片拖入画布 |
-| `main.js:967` | `canvas.addEventListener("drop", ...)` | 接收用户拖入的单张图片 |
+| `main.js:858` | `window.addEventListener("keydown", ...)` | 窗口内按键 → 弹字符、按键下沉/高亮、猫爪跟敲 |
+| `main.js:863` | `window.addEventListener("mousemove", ...)` | 窗口内鼠标位置 → 眼睛追踪 |
+| `main.js:864` | `window.addEventListener("wheel", ...)` | 窗口内滚轮 → 唤醒猫 |
+| `main.js:867` | `canvas.addEventListener("mousedown", ...)` | 画布内按下：靠近头部摸猫，否则拖动窗口 |
+| `main.js:876` | `window.addEventListener("mouseup", ...)` | 结束摸猫、停止呼噜 |
+| `main.js:879` | `canvas.addEventListener("contextmenu", ...)` | 画布右键打开设置面板 |
+| `main.js:1014` | `window.addEventListener("resize", ...)` | 窗口尺寸变化时调整相机与渲染器 |
+| `main.js:1084` | `file.onchange = ...` | 用户在文件选择框中点选单张图片 |
+| `main.js:1089` | `canvas.addEventListener("dragover", ...)` | 允许把单张图片拖入画布 |
+| `main.js:1090` | `canvas.addEventListener("drop", ...)` | 接收用户拖入的单张图片 |
 
 **早期网页原型 `desktop-cat/index.html`（不在最终 exe 中）**：`:180` resize、`:253` keydown、`:257` keyup、`:258` 与 `:284` mousemove、`:265` wheel、`:269` contextmenu、`:270` mousedown、`:280` mouseup。
 
@@ -894,6 +894,36 @@ AI 客户端 ─stdio─> MCP 服务端 ─写─> %APPDATA%/PawPal/config.json�
 
 - `python pawpal/make_shortcut.py <路径>` → `flags 0x1b5`、`idlist_ok True`、自检通过。
 - `os.startfile()` 打开新桌面图标 → PawPal.exe 进程出现并常驻，确认双击可用。
+
+---
+
+## 16. 按键弹字与猫爪跟敲（本次新增）
+
+### 16.1 需求
+
+用户希望打字时按键能弹出所按的符号，并做成动态小按键效果；小猫的胳膊要落在键盘上跟着敲。
+
+### 16.2 实现要点
+
+全部在 `pawpal/src/main.js`，没有新增运行时依赖、没有网络请求：
+
+| 位置 | 内容 |
+|---|---|
+| `main.js:449-504` | 新增 `popupsGroup` / `symbolTextures` / `keyPopups`；`symbolLabel()` 把 `Space/Enter/Tab` 等映射为 `␣/↵/⇥`；`symbolTexture()` 用 Canvas 生成字符贴图并缓存（上限 80 个），`spawnSymbol()` 创建面向相机的 Sprite 弹字 |
+| `main.js:440-445` | 每个键帽记录 `userData.baseY` 与 `userData.press`，用于下沉/回弹 |
+| `main.js:758-809` | `keyIndex()` 把键码映射到键帽（隐私模式下随机左右半区）；`lightKey()` 同时设置发光与按下状态；`pressKey()` 取目标键的世界坐标并转成猫的本地坐标，写入 `S.pawTarget[side]` |
+| `main.js:858-860` | 窗口内 `keydown` 把 `e.key` 传给 `pressKey()`，因此弹的是真实按下的符号 |
+| `main.js:940-977`（动画循环） | 键帽按下时下沉 0.09 并在 220ms 内回弹；符号精灵 720ms 内上飘 0.5 并淡出，最多同时 14 个；猫爪在最近一次按键后 1.1 秒内插值移到目标键位，之后回到胸前 |
+| `CFG.privacy` | 隐私模式下不显示真实字符，只弹 `•`；键位也随机化，与原有行为一致 |
+| 演示模式 | 随机敲 `A/L` 时也会弹出 `a/l`，便于无人操作时展示效果 |
+| `tauri.conf.json:45` | NSIS 语言代码由 `SimplifiedChinese` 改为系统实际提供的 `SimpChinese`，使完整打包（MSI + NSIS）不再因缺语言文件失败 |
+
+### 16.3 验证
+
+- `node --check pawpal/src/main.js` 通过；`npm run build` 与 `npx tauri build` 均成功，MSI 与 NSIS 安装包一并产出。
+- 用无头 Chrome + CDP 派发窗口内按键序列（`KeyA/KeyS/KeyD/KeyL/Space`），截图确认：猫左爪与右爪分别落到键盘键位上，被敲键帽高亮，字符 `S`、`D`、`L` 从键帽上方弹出并上飘；控制台无异常。
+- 最终交付：`deliverables/PawPal.exe`（9.2 MB，SHA-256 `5712c04d529d50af45b39b6968ff3b4a72a841a2d39d9fe69794b9cca238d8c0`）。
+- 合规边界不变：弹字只发生在应用自身窗口内，不读剪贴板、不联网、不开端口、不写额外文件；隐私模式可关闭真实字符显示。
 
 ---
 

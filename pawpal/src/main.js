@@ -194,7 +194,7 @@ function makePaw(sign) {
     g.add(toe);
   }
   cat.add(g);
-  paws.push({ group:g, sign, baseY:g.position.y });
+  paws.push({ group:g, sign, baseX:g.position.x, baseY:g.position.y, baseZ:g.position.z });
 }
 makePaw(-1); makePaw(1);
 
@@ -371,7 +371,9 @@ function applyBody() {
   paws.forEach(p => {
     p.group.position.x = p.sign*0.62*s;
     p.group.position.y = -0.62 + (b === "chubby" ? 0.06 : 0);
+    p.baseX = p.group.position.x;
     p.baseY = p.group.position.y;
+    p.baseZ = p.group.position.z;
   });
 }
 
@@ -439,12 +441,72 @@ function buildKeys(layout) {
     for (let c=0;c<cols;c++){
       const k = roundedBox(kw, 0.12, kh, 0.035, M.keycap.clone());
       k.position.set(-totalW/2 + c*(kw+gap) + kw/2, 0.18, -totalH/2 + r*(kh+gap) + kh/2);
+      k.userData.baseY = k.position.y;
+      k.userData.press = 0;
       keyboard.add(k);
       keyMeshes.push(k);
     }
   }
 }
 buildKeys(CFG.layout);
+
+/* ---- 按键符号弹出：只在窗口内按键时生成，隐私模式下只显示圆点 ---- */
+const popupsGroup = new THREE.Group();
+keyboard.add(popupsGroup);
+const symbolTextures = new Map();
+const keyPopups = [];
+
+function symbolLabel(key) {
+  if (!key) return "";
+  const special = {
+    " ": "␣", Space: "␣", Enter: "↵", NumpadEnter: "↵", Tab: "⇥", Backspace: "⌫",
+    Escape: "Esc", Delete: "Del", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→",
+    Shift: "⇧", Control: "Ctrl", Alt: "Alt", Meta: "◆", CapsLock: "⇪",
+  };
+  if (special[key]) return special[key];
+  return key.length === 1 ? key.toUpperCase() : key.slice(0, 2);
+}
+
+function symbolTexture(text) {
+  let tex = symbolTextures.get(text);
+  if (tex) return tex;
+  const canvas = document.createElement("canvas");
+  canvas.width = 128; canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, 128, 128);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = `bold ${text.length > 1 ? 54 : 76}px system-ui, -apple-system, sans-serif`;
+  ctx.lineJoin = "round"; ctx.lineWidth = 12; ctx.strokeStyle = "rgba(48,36,60,0.9)";
+  ctx.strokeText(text, 64, 68);
+  ctx.fillStyle = "#fff6d8"; ctx.fillText(text, 64, 68);
+  tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  if (symbolTextures.size > 80) {
+    const first = symbolTextures.keys().next().value;
+    symbolTextures.get(first).dispose();
+    symbolTextures.delete(first);
+  }
+  symbolTextures.set(text, tex);
+  return tex;
+}
+
+function spawnSymbol(idx, label) {
+  const k = keyMeshes[idx];
+  if (!k || !label) return;
+  const material = new THREE.SpriteMaterial({
+    map: symbolTexture(label), transparent: true, depthTest: false, opacity: 1,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.position.set(k.position.x, k.position.y + 0.2, k.position.z + 0.08);
+  sprite.scale.setScalar(0.26);
+  popupsGroup.add(sprite);
+  keyPopups.push({ mesh: sprite, life: 1, baseY: sprite.position.y });
+  while (keyPopups.length > 14) {
+    const old = keyPopups.shift();
+    popupsGroup.remove(old.mesh);
+    old.mesh.material.dispose();
+  }
+}
 
 /* ---- 迷你鼠标 ---- */
 const miniMouse = new THREE.Group();
@@ -462,6 +524,7 @@ const mEyeR = sphere(0.055, M.eye); mEyeR.position.set(0.17,0.17,-0.32); miniMou
 const S = {
   t:0, lastAct:performance.now(), sleeping:false, petting:false,
   pawL:0, pawR:0, flash:{key:"",side:"",t:0},
+  lastKey:0, pawTarget:{ L:null, R:null },
   eyeX:0, eyeY:0, headTilt:0, blink:0, nextBlink:1500+Math.random()*2500,
   scroll:0, mouseX:0, mouseY:0, demo:false, demoTimer:0,
   nextIdle:3000+Math.random()*3000, yawn:0, zzz:[], hearts:[],
@@ -692,38 +755,58 @@ function showToast(text) {
   showToast.timer = setTimeout(() => el.classList.remove("show"), 2600);
 }
 
-function pressKey(code, side) {
+function keyIndex(code, side) {
+  if (!keyMeshes.length) return -1;
+  const mid = Math.floor(keyMeshes.length/2);
+  if (CFG.privacy) {
+    return side === "L"
+      ? Math.floor(Math.random()*mid)
+      : mid + Math.floor(Math.random()*(keyMeshes.length-mid));
+  }
+  const map = { Q:4,W:5,E:6,R:7,T:8,Y:9,U:10,I:11,O:12,P:13,A:20,S:21,D:22,F:23,G:24,H:25,J:26,K:27,L:28,Z:36,X:37,C:38,V:39,B:40,N:41,M:42 };
+  const ch = (code||"").replace("Key","").toUpperCase();
+  if (map[ch] !== undefined) return Math.min(map[ch], keyMeshes.length-1);
+  let h = 0;
+  for (const c of String(code||"")) h = (h*31 + c.charCodeAt(0)) % keyMeshes.length;
+  return h;
+}
+
+function lightKey(code, side, idx) {
+  if (idx < 0) return;
+  const k = keyMeshes[idx];
+  if (!k) return;
+  k.material.emissive = new THREE.Color(currentCoat().eye);
+  k.material.emissiveIntensity = 1.1;
+  k.material.color.setHex(0xffffff);
+  k.userData.press = 1;
+  clearTimeout(k.userData.resetTimer);
+  k.userData.resetTimer = setTimeout(()=>{
+    if (k.material) { k.material.emissiveIntensity = 0; k.material.color.setHex(0x6b6573); }
+  }, 220);
+}
+
+function pressKey(code, side, label) {
   const now = performance.now();
   if (side === "L") S.pawL = 1; else S.pawR = 1;
   S.flash = { key:code, side, t:now };
   S.lastAct = now;
+  S.lastKey = now;
   wake();
-  lightKey(code, side);
+  const idx = keyIndex(code, side);
+  lightKey(code, side, idx);
+  // 隐私模式下只弹圆点，不显示真实字符
+  spawnSymbol(idx, CFG.privacy ? "•" : symbolLabel(label));
+  const k = keyMeshes[idx];
+  if (k) {
+    keyboard.updateWorldMatrix(true, false);
+    cat.updateWorldMatrix(true, false);
+    const target = k.getWorldPosition(new THREE.Vector3());
+    cat.worldToLocal(target);
+    target.y += 0.1;
+    S.pawTarget[side] = target;
+  }
 }
-
-function lightKey(code, side) {
-  const now = S.t;
-  keyMeshes.forEach((k, i) => {
-    const mid = Math.floor(keyMeshes.length/2);
-    let idx = -1;
-    if (!CFG.privacy) {
-      const map = { Q:4,W:5,E:6,R:7,T:8,Y:9,U:10,I:11,O:12,P:13,A:20,S:21,D:22,F:23,G:24,H:25,J:26,K:27,L:28,Z:36,X:37,C:38,V:39,B:40,N:41,M:42 };
-      const ch = (code||"").replace("Key","").toUpperCase();
-      idx = map[ch];
-      if (idx === undefined) idx = -1;
-    } else {
-      idx = side === "L" ? Math.floor(Math.random()*mid) : mid + Math.floor(Math.random()*(keyMeshes.length-mid));
-    }
-    if (idx === i) {
-      k.material.emissive = new THREE.Color(currentCoat().eye);
-      k.material.emissiveIntensity = 1.1;
-      k.material.color.setHex(0xffffff);
-      setTimeout(()=>{
-        if (k.material) { k.material.emissiveIntensity = 0; k.material.color.setHex(0x6b6573); }
-      }, 220);
-    }
-  });
-}
+window.__pawpalPressKey = pressKey;
 
 function wake() {
   if (S.sleeping) {
@@ -775,7 +858,7 @@ const isTauri = !!window.__TAURI_INTERNALS__;
 window.addEventListener("keydown", e=>{
   if (e.repeat) return;
   const left = "`12345qwertasdfgzxcvb".includes(e.key.toLowerCase());
-  pressKey(e.code, left?"L":"R");
+  pressKey(e.code, left?"L":"R", e.key);
 });
 window.addEventListener("mousemove", e=>{ S.mouseX=e.clientX; S.mouseY=e.clientY; S.lastAct=performance.now(); wake(); });
 window.addEventListener("wheel", ()=>{ S.scroll=1; S.lastAct=performance.now(); wake(); });
@@ -805,6 +888,34 @@ function frame(now){
   S.scroll = Math.max(0, S.scroll - dt/450);
   S.yawn = Math.max(0, S.yawn - dt/500);
 
+  // 键帽被按下后下沉，再回弹
+  keyMeshes.forEach(k=>{
+    const v = k.userData.press || 0;
+    if (v > 0) {
+      const nv = Math.max(0, v - dt/220);
+      k.userData.press = nv;
+      k.position.y = k.userData.baseY - 0.09*nv;
+    } else if (k.position.y !== k.userData.baseY) {
+      k.position.y = k.userData.baseY;
+    }
+  });
+  // 弹出的字符向上飘并淡出
+  keyPopups.forEach(p=>{
+    p.life -= dt/720;
+    const t = 1 - Math.max(0, p.life);
+    p.mesh.position.y = p.baseY + t*0.5;
+    p.mesh.scale.setScalar(0.26 + Math.min(1, t*5)*0.12);
+    p.mesh.material.opacity = Math.max(0, Math.min(1, p.life*1.8));
+  });
+  for (let i=keyPopups.length-1;i>=0;i--){
+    if (keyPopups[i].life <= 0){
+      const p = keyPopups[i];
+      popupsGroup.remove(p.mesh);
+      p.mesh.material.dispose();
+      keyPopups.splice(i,1);
+    }
+  }
+
   if (now>S.nextBlink){ S.blink=1; S.nextBlink=now+1800+Math.random()*3000; }
   if (S.blink>0) S.blink=Math.max(0, S.blink-dt/150);
 
@@ -819,7 +930,8 @@ function frame(now){
     S.demoTimer-=dt;
     if (S.demoTimer<=0){
       S.demoTimer=90+Math.random()*160;
-      pressKey(Math.random()<0.5?"KeyA":"KeyL", Math.random()<0.5?"L":"R");
+      const demoKey = Math.random()<0.5 ? "KeyA" : "KeyL";
+      pressKey(demoKey, Math.random()<0.5?"L":"R", demoKey === "KeyA" ? "a" : "l");
     }
   }
 
@@ -847,10 +959,21 @@ function frame(now){
   blushL.material.opacity = S.petting ? 0.85 : 0.55;
   blushR.material.opacity = blushL.material.opacity;
 
-  // 爪子
+  // 爪子：打字时移到被敲的键位上方，停止后回到胸前
   paws.forEach(p=>{
+    const side = p.sign<0 ? "L" : "R";
     const lift = p.sign<0 ? S.pawL : S.pawR;
-    p.group.position.y = p.baseY + lift*0.42;
+    const target = (!S.sleeping && now - S.lastKey < 1100) ? S.pawTarget[side] : null;
+    const k = Math.min(1, dt/90);
+    if (target) {
+      p.group.position.x += (target.x - p.group.position.x)*k;
+      p.group.position.y += (target.y - p.group.position.y)*k;
+      p.group.position.z += (target.z - p.group.position.z)*k;
+    } else {
+      p.group.position.x += (p.baseX - p.group.position.x)*k;
+      p.group.position.y += (p.baseY - p.group.position.y)*k;
+      p.group.position.z += (p.baseZ - p.group.position.z)*k;
+    }
     p.group.rotation.x = -lift*0.3;
   });
 

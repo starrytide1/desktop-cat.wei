@@ -42,7 +42,7 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimplifiedChinese"]
+        "languages": ["SimpChinese"]
       }
     }
   }
